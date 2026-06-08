@@ -23,6 +23,16 @@ export interface Transaction {
   category: string;
   date?: any;
   is_fixed?: boolean;
+
+  // =========================
+  // CAMPOS PARA OPEN FINANCE MOCK
+  // =========================
+  external_id?: string;
+  source?: 'manual' | 'open_finance_mock';
+  bank_name?: string;
+  account_id?: string;
+  original_date?: string;
+  imported_at?: any;
 }
 
 const COLLECTION_NAME = 'transactions';
@@ -102,6 +112,7 @@ export const transactionService = {
           {
             ...fixedItem,
             user_id: userId,
+            source: 'manual',
             date: serverTimestamp()
           }
         );
@@ -180,11 +191,100 @@ export const transactionService = {
         category: transaction.category,
         user_id: userId,
         is_fixed: false,
+        source: 'manual',
         date: serverTimestamp()
       }
     );
 
     return docRef.id;
+  },
+
+  // =========================
+  // IMPORTAR TRANSAÇÕES OPEN FINANCE MOCK
+  // =========================
+  importFromOpenFinance: async (
+    userId: string,
+    transactions: Transaction[]
+  ): Promise<{
+    importedCount: number;
+    skippedCount: number;
+  }> => {
+
+    const q = query(
+      collection(db, COLLECTION_NAME),
+      where('user_id', '==', userId),
+      where('source', '==', 'open_finance_mock')
+    );
+
+    const snapshot = await getDocs(q);
+
+    const existingExternalIds =
+      new Set<string>();
+
+    snapshot.forEach((document) => {
+
+      const data =
+        document.data() as Transaction;
+
+      if (data.external_id) {
+        existingExternalIds.add(data.external_id);
+      }
+
+    });
+
+    let importedCount = 0;
+
+    let skippedCount = 0;
+
+    for (const item of transactions) {
+
+      if (!item.external_id) {
+        skippedCount++;
+        continue;
+      }
+
+      if (
+        existingExternalIds.has(
+          item.external_id
+        )
+      ) {
+        skippedCount++;
+        continue;
+      }
+
+      await addDoc(
+        collection(db, COLLECTION_NAME),
+        {
+          description: item.description,
+          amount: item.amount,
+          type: item.type,
+          category: item.category,
+          user_id: userId,
+          is_fixed: false,
+
+          date: serverTimestamp(),
+
+          external_id: item.external_id,
+          source: 'open_finance_mock',
+          bank_name: item.bank_name || 'Banco Simulado',
+          account_id: item.account_id || '',
+          original_date: item.original_date || '',
+          imported_at: serverTimestamp()
+        }
+      );
+
+      existingExternalIds.add(
+        item.external_id
+      );
+
+      importedCount++;
+    }
+
+    return {
+      importedCount,
+      skippedCount
+    };
+
   },
 
   // =========================

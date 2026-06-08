@@ -9,7 +9,8 @@ import {
   StyleSheet,
   ScrollView,
   SafeAreaView,
-  TouchableOpacity
+  TouchableOpacity,
+  ActivityIndicator
 } from 'react-native';
 
 import { MaterialCommunityIcons } from '@expo/vector-icons';
@@ -30,6 +31,11 @@ import {
   Transaction
 } from '../database/transactionService';
 
+import {
+  economicIndicatorsService,
+  EconomicIndicator
+} from '../services/economicIndicatorsService';
+
 export default function Dashboard() {
 
   const [profile, setProfile] =
@@ -38,10 +44,22 @@ export default function Dashboard() {
   const [transactions, setTransactions] =
     useState<Transaction[]>([]);
 
+  const [selic, setSelic] =
+    useState<EconomicIndicator | null>(null);
+
+  const [ipca, setIpca] =
+    useState<EconomicIndicator | null>(null);
+
+  const [dollar, setDollar] =
+    useState<EconomicIndicator | null>(null);
+
+  const [loadingIndicators, setLoadingIndicators] =
+    useState(false);
+
   const user = auth.currentUser;
 
   // =========================
-  // CARREGAR DADOS
+  // CARREGAR DADOS FIRESTORE
   // =========================
   const loadData = async () => {
 
@@ -71,11 +89,58 @@ export default function Dashboard() {
   };
 
   // =========================
+  // CARREGAR INDICADORES VIA API
+  // =========================
+  const loadEconomicIndicators = async () => {
+
+    try {
+
+      setLoadingIndicators(true);
+
+      const [
+        selicData,
+        ipcaData,
+        dollarData
+      ] = await Promise.all([
+        economicIndicatorsService.getSelic(),
+        economicIndicatorsService.getIpca(),
+        economicIndicatorsService.getDollar()
+      ]);
+
+      setSelic(selicData);
+
+      setIpca(ipcaData);
+
+      setDollar(dollarData);
+
+    } catch (error) {
+
+      console.error(
+        'Erro ao carregar indicadores econômicos:',
+        error
+      );
+
+      setSelic(null);
+
+      setIpca(null);
+
+      setDollar(null);
+
+    } finally {
+
+      setLoadingIndicators(false);
+
+    }
+
+  };
+
+  // =========================
   // ATUALIZA AO VOLTAR PRA TELA
   // =========================
   useFocusEffect(
     useCallback(() => {
       loadData();
+      loadEconomicIndicators();
     }, [])
   );
 
@@ -155,6 +220,32 @@ export default function Dashboard() {
       return 'television-play';
 
     return 'cash-minus';
+
+  };
+
+  // =========================
+  // FORMATAR INDICADOR
+  // =========================
+  const formatIndicatorValue = (
+    indicator: EconomicIndicator | null,
+    money?: boolean
+  ) => {
+
+    if (!indicator) return '--';
+
+    if (money) {
+
+      return `R$ ${indicator.value
+        .toFixed(2)
+        .replace('.', ',')}`;
+
+    }
+
+    const unit = '%';
+
+    return `${indicator.value
+      .toString()
+      .replace('.', ',')} ${unit}`;
 
   };
 
@@ -284,6 +375,122 @@ export default function Dashboard() {
 
         </View>
 
+        {/*
+          FUTURO: GASTOS POR CATEGORIA
+
+          Este bloco será utilizado posteriormente para exibir
+          gráficos de distribuição de gastos por categoria.
+
+          A implementação futura deverá consumir os dados consolidados
+          da aba Categorias e/ou das transações categorizadas.
+
+          Exemplo previsto:
+          - Moradia
+          - Alimentação
+          - Transporte
+          - Saúde
+          - Outros
+        */}
+
+        {/* INDICADORES ECONÔMICOS */}
+        <View style={styles.whiteCard}>
+
+          <View style={styles.indicatorsHeader}>
+
+            <View style={styles.indicatorsTitleBox}>
+
+              <MaterialCommunityIcons
+                name="chart-line"
+                size={22}
+                color="#1B365D"
+              />
+
+              <Text style={styles.cardTitleNoMargin}>
+                Indicadores Econômicos
+              </Text>
+
+            </View>
+
+            {loadingIndicators && (
+
+              <ActivityIndicator
+                size="small"
+                color="#1B365D"
+              />
+
+            )}
+
+          </View>
+
+          <Text style={styles.indicatorsDescription}>
+            Dados econômicos simulados via API FinanceIQ para apoiar a análise financeira do usuário.
+          </Text>
+
+          <View style={styles.indicatorGrid}>
+
+            <IndicatorCard
+              icon="percent-outline"
+              title="Selic"
+              value={formatIndicatorValue(selic)}
+              subtitle="Taxa básica de juros"
+            />
+
+            <IndicatorCard
+              icon="chart-bell-curve"
+              title="IPCA"
+              value={formatIndicatorValue(ipca)}
+              subtitle="Inflação acumulada"
+            />
+
+            <IndicatorCard
+              icon="currency-usd"
+              title="Dólar"
+              value={formatIndicatorValue(dollar, true)}
+              subtitle="Cotação simulada"
+            />
+
+          </View>
+
+          <Text style={styles.indicatorsSource}>
+            Fonte: API FinanceIQ • Open Finance Mock + Indicadores Econômicos
+          </Text>
+
+        </View>
+
+        {/*
+          FUTURO: EVOLUÇÃO MENSAL
+
+          Este bloco poderá retornar futuramente para exibir
+          comparação mensal de entradas, saídas e saldo.
+
+          Nesta etapa, o espaço equivalente foi utilizado para
+          Indicadores Econômicos, pois a API já está funcional.
+        */}
+
+        {/*
+          FUTURO: METAS EM DESTAQUE
+
+          Este bloco será implementado quando o módulo de metas
+          financeiras estiver disponível.
+
+          Estrutura prevista:
+          - Nome da meta
+          - Valor atual
+          - Valor-alvo
+          - Barra de progresso
+          - Prazo estimado
+        */}
+
+        {/*
+          FUTURO: SUGESTÃO INTELIGENTE
+
+          Este bloco será implementado futuramente com base em:
+          - regras financeiras simples;
+          - análise das categorias;
+          - perfil de risco;
+          - possível IA ou motor de recomendações.
+        */}
+
         {/* HISTÓRICO */}
         <View style={styles.whiteCard}>
 
@@ -389,6 +596,43 @@ export default function Dashboard() {
   );
 }
 
+// =========================
+// CARD DE INDICADOR
+// =========================
+const IndicatorCard = ({
+  icon,
+  title,
+  value,
+  subtitle
+}: any) => (
+
+  <View style={styles.indicatorCard}>
+
+    <View style={styles.indicatorIconBox}>
+
+      <MaterialCommunityIcons
+        name={icon}
+        size={22}
+        color="#1B365D"
+      />
+
+    </View>
+
+    <Text style={styles.indicatorTitle}>
+      {title}
+    </Text>
+
+    <Text style={styles.indicatorValue}>
+      {value}
+    </Text>
+
+    <Text style={styles.indicatorSubtitle}>
+      {subtitle}
+    </Text>
+
+  </View>
+);
+
 const styles = StyleSheet.create({
 
   container: {
@@ -493,6 +737,13 @@ const styles = StyleSheet.create({
     marginBottom: 20
   },
 
+  cardTitleNoMargin: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#1B365D',
+    marginLeft: 8
+  },
+
   insightCard: {
     backgroundColor: '#E8F5E9',
     borderRadius: 20,
@@ -518,6 +769,76 @@ const styles = StyleSheet.create({
   insightDescription: {
     fontSize: 14,
     color: '#2C3E50'
+  },
+
+  indicatorsHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 10
+  },
+
+  indicatorsTitleBox: {
+    flexDirection: 'row',
+    alignItems: 'center'
+  },
+
+  indicatorsDescription: {
+    fontSize: 13,
+    color: '#7F8C8D',
+    lineHeight: 19,
+    marginBottom: 16
+  },
+
+  indicatorGrid: {
+    flexDirection: 'row',
+    justifyContent: 'space-between'
+  },
+
+  indicatorCard: {
+    width: '31%',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 16,
+    padding: 12,
+    alignItems: 'center'
+  },
+
+  indicatorIconBox: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: '#EEF3F8',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 8
+  },
+
+  indicatorTitle: {
+    fontSize: 13,
+    fontWeight: 'bold',
+    color: '#1B365D'
+  },
+
+  indicatorValue: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#27AE60',
+    marginTop: 5,
+    textAlign: 'center'
+  },
+
+  indicatorSubtitle: {
+    fontSize: 10,
+    color: '#95A5A6',
+    marginTop: 4,
+    textAlign: 'center'
+  },
+
+  indicatorsSource: {
+    fontSize: 11,
+    color: '#95A5A6',
+    marginTop: 14,
+    textAlign: 'center'
   },
 
   transactionItem: {
