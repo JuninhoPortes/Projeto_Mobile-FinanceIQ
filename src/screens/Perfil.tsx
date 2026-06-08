@@ -88,6 +88,15 @@ export default function Perfil({ navigation }: any) {
   );
 
   // =========================
+  // ACESSAR OPEN FINANCE
+  // =========================
+  const handleOpenFinanceAccess = () => {
+
+    navigation.navigate('OpenFinance');
+
+  };
+
+  // =========================
   // LOGOUT
   // =========================
   const handleLogout = async () => {
@@ -256,7 +265,8 @@ export default function Perfil({ navigation }: any) {
           <MenuItem
             icon="bank-outline"
             title="Open Finance"
-            subtitle="Nenhum banco conectado"
+            subtitle="Gerenciar bancos e permissões simuladas"
+            onPress={handleOpenFinanceAccess}
           />
 
           <MenuItem
@@ -326,7 +336,8 @@ const MenuItem = ({
   icon,
   title,
   subtitle,
-  isLast
+  isLast,
+  onPress
 }: any) => (
 
   <TouchableOpacity
@@ -336,6 +347,7 @@ const MenuItem = ({
         borderBottomWidth: 0
       }
     ]}
+    onPress={onPress}
   >
 
     <View style={styles.menuIconBox}>

@@ -32,6 +32,15 @@ yarn-error.*
 
 # local env files
 .env*.local
+.env
+.env.local
+.env.development
+.env.production
+
+# Backend API
+financeiq-api/node_modules/
+financeiq-api/.env
+financeiq-api/dist/
 
 # typescript
 *.tsbuildinfo

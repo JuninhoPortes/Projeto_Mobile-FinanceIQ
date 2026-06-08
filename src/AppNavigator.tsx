@@ -3,6 +3,9 @@ import React, {
   useEffect
 } from 'react';
 
+import OpenFinance from './screens/OpenFinance';
+import OpenFinanceBankDetails from './screens/OpenFinanceBankDetails';
+
 import {
   View,
   ActivityIndicator
@@ -153,6 +156,16 @@ export default function AppNavigator() {
       <Stack.Screen
         name="Index"
         component={Routes}
+      />
+
+      <Stack.Screen
+        name="OpenFinance"
+        component={OpenFinance}
+      />
+
+      <Stack.Screen
+        name="OpenFinanceBankDetails"
+        component={OpenFinanceBankDetails}
       />
 
     </Stack.Navigator>
