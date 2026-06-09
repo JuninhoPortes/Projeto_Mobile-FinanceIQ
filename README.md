@@ -2,7 +2,7 @@
 
 **FinanceIQ** é um aplicativo mobile desenvolvido com **React Native**, **Expo** e **TypeScript**, voltado para controle financeiro pessoal. O app permite cadastro e login de usuários, configuração inicial de perfil financeiro, registro de lançamentos positivos e negativos, acompanhamento de saldo, histórico de movimentações e persistência dos dados em nuvem utilizando **Firebase Authentication** e **Cloud Firestore**.
 
-Além das funcionalidades principais de controle financeiro, o projeto também possui integração com uma API própria em **Node.js + Express**, consumida via **Axios**, responsável por simular recursos de **Open Finance Mock** e fornecer **Indicadores Econômicos** para a Dashboard.
+Além das funcionalidades principais de controle financeiro, o projeto possui integração com uma API própria em **Node.js + Express**, consumida via **Axios**, responsável por simular recursos de **Open Finance Mock** e fornecer **Indicadores Econômicos** para a Dashboard.
 
 ---
 
@@ -124,16 +124,7 @@ A Dashboard mostra:
 * histórico recente dos lançamentos;
 * Indicadores Econômicos consumidos via API.
 
-Nesta versão, a área de **Evolução Mensal** foi temporariamente substituída pelos **Indicadores Econômicos**, pois essa integração já está funcional.
-
-Os blocos futuros de:
-
-* gráficos por categoria;
-* metas em destaque;
-* sugestão inteligente;
-* evolução mensal;
-
-foram previstos como evolução da Dashboard e podem ser integrados posteriormente com os dados da aba **Categorias**, com regras financeiras ou com módulos futuros de metas e recomendações.
+As transações importadas pelo Open Finance Mock passam a integrar o cálculo da Dashboard apenas depois da sincronização e persistência no Firestore.
 
 ---
 
@@ -162,7 +153,7 @@ Nesta versão, os indicadores são simulados pelo backend para fins acadêmicos.
 
 ---
 
-### Open Finance Mock
+## Open Finance Mock
 
 O FinanceIQ possui uma área de **Open Finance Mock**, implementada com uma API própria em **Node.js + Express**.
 
@@ -193,6 +184,45 @@ Perfil
 ```
 
 A integração Open Finance implementada neste projeto é um **mock acadêmico**. Ela simula autorização, leitura e sincronização de dados financeiros, mas não se conecta a bancos reais nem utiliza credenciais bancárias reais.
+
+---
+
+### Saldo autorizado simulado
+
+O campo **Saldo autorizado simulado** representa a soma dos saldos disponíveis dos bancos que foram autorizados pelo usuário na tela Open Finance.
+
+O saldo de cada banco não é um valor fixo manual. Ele é calculado a partir das transações simuladas daquele banco.
+
+A lógica aplicada é:
+
+```text
+Saldo do banco = Total de entradas do banco - Total de saídas do banco
+```
+
+Exemplo para uma instituição simulada:
+
+```text
+Entrada:
++ R$ 4.000,00
+
+Saídas:
+- R$ 360,60
+- R$ 99,90
+- R$ 159,90
+
+Saldo disponível:
+R$ 4.000,00 - R$ 620,40 = R$ 3.379,60
+```
+
+Se apenas o Nubank estiver autorizado, o campo **Saldo autorizado simulado** exibirá somente o saldo calculado do Nubank.
+
+Se Nubank e Itaú estiverem autorizados, o campo exibirá:
+
+```text
+Saldo autorizado simulado = Saldo Nubank + Saldo Itaú
+```
+
+Esse saldo é exibido apenas na tela Open Finance como representação do saldo bancário simulado. A Dashboard continua sendo atualizada com base nas transações efetivamente sincronizadas e salvas no Firestore.
 
 ---
 
@@ -233,12 +263,12 @@ Exemplo de transação importada:
 {
   "user_id": "UID_DO_USUARIO",
   "description": "Supermercado",
-  "amount": 320.5,
+  "amount": 360.6,
   "type": "outcome",
   "category": "Alimentação",
   "is_fixed": false,
   "source": "open_finance_mock",
-  "external_id": "nubank_of_usuario_001",
+  "external_id": "of_UID_DO_USUARIO_nubank_002",
   "bank_name": "Nubank",
   "account_id": "acc_nubank_mock",
   "original_date": "2026-05-22",
@@ -252,9 +282,40 @@ O campo `external_id` evita duplicidade. Dessa forma, se o usuário sincronizar 
 As transações importadas passam a aparecer naturalmente em:
 
 * Dashboard;
-* Histórico recente;
+* histórico recente;
 * tela de Lançamentos;
 * cálculos de saldo, entradas e saídas.
+
+---
+
+### Consentimentos do Open Finance
+
+Os bancos autorizados e as permissões concedidas são persistidos no Firestore.
+
+Isso evita que, ao sair e voltar para a tela Open Finance, os bancos autorizados voltem para o estado inicial.
+
+Os consentimentos simulados armazenam informações como:
+
+```json
+{
+  "user_id": "UID_DO_USUARIO",
+  "bank_id": "nubank",
+  "bank_name": "Nubank",
+  "account_id": "acc_nubank_mock",
+  "account_type": "Conta Digital",
+  "connected": true,
+  "permissions": {
+    "balance": true,
+    "transactions": true,
+    "personalData": false
+  },
+  "last_sync": "timestamp",
+  "created_at": "timestamp",
+  "updated_at": "timestamp"
+}
+```
+
+Ao desconectar um banco, o sistema remove o consentimento e também remove as transações importadas daquele banco, fazendo com que a Dashboard volte a refletir apenas os dados restantes do usuário.
 
 ---
 
@@ -266,7 +327,8 @@ Essa tela exibe:
 
 * nome da instituição;
 * tipo de conta;
-* saldo sincronizado, caso a permissão tenha sido concedida;
+* status de conexão;
+* saldo calculado da instituição simulada;
 * usuário FinanceIQ vinculado;
 * permissões concedidas;
 * transações simuladas, caso autorizadas;
@@ -276,22 +338,6 @@ Essa tela exibe:
 O nome e o e-mail exibidos vêm do **Firebase Authentication**, conforme o usuário autenticado no app.
 
 Os dados bancários, como banco, saldo, conta, permissões e transações, são simulados pela API Open Finance Mock.
-
----
-
-### Perfil do usuário
-
-A tela de perfil exibe:
-
-* nome do usuário;
-* e-mail;
-* perfil de risco;
-* salário mensal, obtido a partir do lançamento fixo **Salário Mensal**;
-* acesso ao Open Finance;
-* opções visuais de configurações;
-* botão de logout.
-
-O item **Open Finance** direciona o usuário para a tela de gerenciamento das instituições simuladas. As autorizações são realizadas dentro da própria tela Open Finance, por meio dos switches de bancos e permissões.
 
 ---
 
@@ -349,6 +395,7 @@ Projeto_Mobile-FinanceIQ
 ├── src
 │   ├── database
 │   │   ├── initializeDatabase.ts
+│   │   ├── openFinanceConsentService.ts
 │   │   ├── transactionService.ts
 │   │   └── userProfileService.ts
 │   │
@@ -441,6 +488,14 @@ Funções principais:
 * buscar transações simuladas;
 * sincronizar transações simuladas.
 
+As interfaces desse serviço representam os dados vindos da API, incluindo:
+
+* `accountId`;
+* `bankId`;
+* `bankName`;
+* `balance`;
+* `transactions`.
+
 ---
 
 ### `src/services/economicIndicatorsService.ts`
@@ -467,21 +522,24 @@ Funções principais:
 * atualizar valores;
 * remover lançamentos extras;
 * importar transações do Open Finance Mock;
-* evitar duplicidade por `external_id`.
+* evitar duplicidade por `external_id`;
+* remover transações importadas de um banco ao desconectar a instituição.
 
 Todos os lançamentos são vinculados ao `uid` do usuário autenticado.
 
 ---
 
-### `src/database/userProfileService.ts`
+### `src/database/openFinanceConsentService.ts`
 
-Serviço responsável pelos dados de perfil do usuário.
+Serviço responsável por salvar, buscar, atualizar e remover os consentimentos simulados do Open Finance.
 
-Atualmente armazena principalmente:
+Ele mantém persistido no Firestore:
 
-* `risk_profile`.
-
-O salário mensal não fica salvo diretamente no perfil. Ele é tratado como uma transação fixa positiva.
+* banco autorizado;
+* conta vinculada;
+* permissões concedidas;
+* data da última sincronização;
+* status de conexão.
 
 ---
 
@@ -537,6 +595,8 @@ Permite:
 * listar instituições simuladas;
 * autorizar bancos;
 * conceder permissões;
+* exibir saldo calculado por banco;
+* calcular o saldo autorizado simulado;
 * sincronizar transações autorizadas;
 * importar dados para o Firestore;
 * acessar a tela de detalhes da instituição autorizada.
@@ -552,7 +612,7 @@ Exibe:
 * instituição;
 * tipo de conta;
 * status de conexão;
-* saldo, se autorizado;
+* saldo calculado, se autorizado;
 * permissões;
 * transações simuladas, se autorizadas;
 * dados cadastrais simulados, se autorizados;
@@ -561,34 +621,22 @@ Exibe:
 
 ---
 
-### `src/screens/Onboarding.tsx`
+### `financeiq-api/src/services/openFinanceMockService.ts`
 
-Tela de introdução exibida apenas na primeira abertura do app no dispositivo.
+Serviço do backend responsável por gerar os dados simulados do Open Finance.
 
-Utiliza `AsyncStorage` para salvar a chave:
+Ele define:
 
-```text
-hasSeenOnboarding
-```
+* contas simuladas;
+* transações simuladas;
+* cálculo de saldo por conta;
+* sincronização mockada.
 
----
-
-### `src/AppNavigator.tsx`
-
-Arquivo responsável pelo fluxo inicial de navegação.
-
-Regras principais:
+O saldo de cada banco é calculado pela API com base nas transações daquele banco:
 
 ```text
-Se nunca viu onboarding → Onboarding
-Se já viu onboarding e está logado → Index
-Se já viu onboarding e não está logado → Login
+saldo = entradas - saídas
 ```
-
-Também registra as telas:
-
-* OpenFinance;
-* OpenFinanceBankDetails.
 
 ---
 
@@ -777,17 +825,44 @@ Exemplo de lançamento importado do Open Finance Mock:
 {
   "user_id": "UID_DO_USUARIO",
   "description": "Supermercado",
-  "amount": 320.5,
+  "amount": 360.6,
   "type": "outcome",
   "category": "Alimentação",
   "is_fixed": false,
   "source": "open_finance_mock",
-  "external_id": "nubank_of_usuario_001",
+  "external_id": "of_UID_DO_USUARIO_nubank_002",
   "bank_name": "Nubank",
   "account_id": "acc_nubank_mock",
   "original_date": "2026-05-22",
   "imported_at": "timestamp",
   "date": "timestamp"
+}
+```
+
+---
+
+### Coleção `open_finance_consents`
+
+Armazena os consentimentos simulados do Open Finance.
+
+Exemplo:
+
+```json
+{
+  "user_id": "UID_DO_USUARIO",
+  "bank_id": "nubank",
+  "bank_name": "Nubank",
+  "account_id": "acc_nubank_mock",
+  "account_type": "Conta Digital",
+  "connected": true,
+  "permissions": {
+    "balance": true,
+    "transactions": true,
+    "personalData": false
+  },
+  "last_sync": "timestamp",
+  "created_at": "timestamp",
+  "updated_at": "timestamp"
 }
 ```
 
@@ -1019,6 +1094,16 @@ O sistema evita duplicidade usando o campo `external_id`.
 
 ---
 
+### Sobre o saldo autorizado simulado
+
+O saldo autorizado simulado é uma representação visual do saldo calculado dos bancos autorizados.
+
+Ele é calculado a partir das entradas e saídas mockadas de cada instituição.
+
+Ele não representa uma integração bancária real e não substitui o saldo principal da Dashboard, que continua baseado nos lançamentos persistidos no Firestore.
+
+---
+
 ### Sobre o SQLite
 
 O projeto ainda possui a dependência `expo-sqlite` e o arquivo `initializeDatabase.ts`, mas a lógica principal atual foi migrada para o **Cloud Firestore**.
@@ -1030,7 +1115,8 @@ Atualmente, os dados principais do app ficam na nuvem:
 * salário mensal;
 * lançamentos;
 * histórico financeiro;
-* transações importadas do Open Finance Mock.
+* transações importadas do Open Finance Mock;
+* consentimentos simulados do Open Finance.
 
 A dependência `expo-sqlite` pode ser removida futuramente caso não seja mais utilizada.
 
@@ -1128,10 +1214,13 @@ O projeto atualmente possui:
 * histórico recente;
 * Indicadores Econômicos via API;
 * Open Finance Mock;
+* saldo autorizado simulado calculado por banco;
 * tela de detalhes da instituição simulada;
+* consentimentos persistidos no Firestore;
 * sincronização de transações mockadas;
 * persistência das transações importadas no Firestore;
 * controle de duplicidade por `external_id`;
+* remoção dos dados importados ao desconectar banco;
 * dados persistidos em nuvem.
 
 ---
