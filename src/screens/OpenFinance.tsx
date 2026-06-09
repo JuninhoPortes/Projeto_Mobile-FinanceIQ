@@ -31,6 +31,11 @@ import {
   Transaction
 } from '../database/transactionService';
 
+import {
+  openFinanceConsentService,
+  OpenFinancePermissions
+} from '../database/openFinanceConsentService';
+
 interface BankOption {
   id: string;
   name: string;
@@ -44,11 +49,82 @@ interface BankOption {
 }
 
 interface PermissionOption {
-  id: string;
+  id: 'balance' | 'transactions' | 'personalData';
   label: string;
   description: string;
   granted: boolean;
 }
+
+const INITIAL_BANKS: BankOption[] = [
+  {
+    id: 'nubank',
+    name: 'Nubank',
+    accountId: 'acc_nubank_mock',
+    accountType: 'Conta Digital',
+    balance: 0,
+    lastSync: 'Não sincronizado',
+    color: '#8A05BE',
+    icon: 'cards-heart',
+    connected: false
+  },
+  {
+    id: 'itau',
+    name: 'Itaú',
+    accountId: 'acc_itau_mock',
+    accountType: 'Conta Corrente',
+    balance: 0,
+    lastSync: 'Não sincronizado',
+    color: '#FF7A33',
+    icon: 'bank',
+    connected: false
+  },
+  {
+    id: 'bradesco',
+    name: 'Bradesco',
+    accountId: 'acc_bradesco_mock',
+    accountType: 'Conta Corrente',
+    balance: 0,
+    lastSync: 'Não sincronizado',
+    color: '#D9364B',
+    icon: 'bank-outline',
+    connected: false
+  },
+  {
+    id: 'c6',
+    name: 'C6 Bank',
+    accountId: 'acc_c6_mock',
+    accountType: 'Conta Digital',
+    balance: 0,
+    lastSync: 'Não sincronizado',
+    color: '#3B3542',
+    icon: 'credit-card-outline',
+    connected: false
+  }
+];
+
+const INITIAL_PERMISSIONS: PermissionOption[] = [
+  {
+    id: 'balance',
+    label: 'Leitura de saldo',
+    description:
+      'Permite que o FinanceIQ visualize saldos simulados das instituições conectadas.',
+    granted: false
+  },
+  {
+    id: 'transactions',
+    label: 'Histórico de transações',
+    description:
+      'Permite que o FinanceIQ visualize transações simuladas das instituições conectadas.',
+    granted: false
+  },
+  {
+    id: 'personalData',
+    label: 'Dados cadastrais',
+    description:
+      'Permite que o FinanceIQ acesse dados cadastrais simulados vinculados à conta.',
+    granted: false
+  }
+];
 
 export default function OpenFinance({
   navigation
@@ -64,84 +140,74 @@ export default function OpenFinance({
     useState(false);
 
   const [banks, setBanks] =
-    useState<BankOption[]>([
-      {
-        id: 'nubank',
-        name: 'Nubank',
-        accountId: 'acc_nubank_mock',
-        accountType: 'Conta Digital',
-        balance: 2340,
-        lastSync: 'Há 2h',
-        color: '#8A05BE',
-        icon: 'cards-heart',
-        connected: false
-      },
-      {
-        id: 'itau',
-        name: 'Itaú',
-        accountId: 'acc_itau_mock',
-        accountType: 'Conta Corrente',
-        balance: 5820.5,
-        lastSync: 'Há 1h',
-        color: '#FF7A33',
-        icon: 'bank',
-        connected: false
-      },
-      {
-        id: 'bradesco',
-        name: 'Bradesco',
-        accountId: 'acc_bradesco_mock',
-        accountType: 'Conta Corrente',
-        balance: 0,
-        lastSync: 'Não sincronizado',
-        color: '#D9364B',
-        icon: 'bank-outline',
-        connected: false
-      },
-      {
-        id: 'c6',
-        name: 'C6 Bank',
-        accountId: 'acc_c6_mock',
-        accountType: 'Conta Digital',
-        balance: 0,
-        lastSync: 'Não sincronizado',
-        color: '#3B3542',
-        icon: 'credit-card-outline',
-        connected: false
-      }
-    ]);
+    useState<BankOption[]>(INITIAL_BANKS);
 
   const [permissions, setPermissions] =
-    useState<PermissionOption[]>([
-      {
-        id: 'balance',
-        label: 'Leitura de saldo',
-        description:
-          'Permite que o FinanceIQ visualize saldos simulados das instituições conectadas.',
-        granted: false
-      },
-      {
-        id: 'transactions',
-        label: 'Histórico de transações',
-        description:
-          'Permite que o FinanceIQ visualize transações simuladas das instituições conectadas.',
-        granted: false
-      },
-      {
-        id: 'personalData',
-        label: 'Dados cadastrais',
-        description:
-          'Permite que o FinanceIQ acesse dados cadastrais simulados vinculados à conta.',
-        granted: false
-      }
-    ]);
+    useState<PermissionOption[]>(INITIAL_PERMISSIONS);
 
   const user = auth.currentUser;
 
   // =========================
+  // CONVERTER PERMISSÕES
+  // =========================
+  const getPermissionsObject = (
+    permissionList: PermissionOption[]
+  ): OpenFinancePermissions => {
+
+    return {
+      balance:
+        permissionList.find(
+          item => item.id === 'balance'
+        )?.granted || false,
+
+      transactions:
+        permissionList.find(
+          item => item.id === 'transactions'
+        )?.granted || false,
+
+      personalData:
+        permissionList.find(
+          item => item.id === 'personalData'
+        )?.granted || false
+    };
+
+  };
+
+  // =========================
+  // APLICAR SALDOS DA API NOS BANCOS
+  // =========================
+  const applyApiBalancesToBanks = (
+    bankList: BankOption[],
+    apiBalances: OpenFinanceBalance[]
+  ): BankOption[] => {
+
+    return bankList.map((bank) => {
+
+      const apiBalance =
+        apiBalances.find(
+          item => item.accountId === bank.accountId
+        );
+
+      if (!apiBalance) {
+        return bank;
+      }
+
+      return {
+        ...bank,
+        balance: apiBalance.balance
+      };
+
+    });
+
+  };
+
+  // =========================
   // CARREGAR DADOS DA API
   // =========================
-  const loadApiData = async () => {
+  const loadApiData = async (): Promise<{
+    balancesData: OpenFinanceBalance[];
+    transactionsData: OpenFinanceTransaction[];
+  }> => {
 
     if (!user?.uid) {
 
@@ -150,12 +216,13 @@ export default function OpenFinance({
         'Usuário não autenticado.'
       );
 
-      return;
+      return {
+        balancesData: [],
+        transactionsData: []
+      };
     }
 
     try {
-
-      setLoading(true);
 
       const [
         balancesData,
@@ -169,6 +236,11 @@ export default function OpenFinance({
 
       setTransactions(transactionsData);
 
+      return {
+        balancesData,
+        transactionsData
+      };
+
     } catch (error) {
 
       console.error(
@@ -181,11 +253,121 @@ export default function OpenFinance({
         'Não foi possível carregar os dados do Open Finance Mock. Verifique se o backend está rodando e se o endereço em src/services/api.ts está correto.'
       );
 
+      return {
+        balancesData: [],
+        transactionsData: []
+      };
+
+    }
+
+  };
+
+  // =========================
+  // CARREGAR CONSENTIMENTOS
+  // =========================
+  const loadConsents = async (
+    apiBalances: OpenFinanceBalance[]
+  ) => {
+
+    if (!user?.uid) return;
+
+    const consents =
+      await openFinanceConsentService.listByUser(
+        user.uid
+      );
+
+    const banksWithApiBalances =
+      applyApiBalancesToBanks(
+        INITIAL_BANKS,
+        apiBalances
+      );
+
+    const updatedBanks =
+      banksWithApiBalances.map((bank) => {
+
+        const consent =
+          consents.find(
+            item =>
+              item.bank_id === bank.id &&
+              item.connected === true
+          );
+
+        if (!consent) {
+          return {
+            ...bank,
+            connected: false,
+            lastSync: 'Não sincronizado'
+          };
+        }
+
+        return {
+          ...bank,
+          connected: true,
+          lastSync:
+            consent.last_sync
+              ? 'Sincronizado'
+              : 'Agora'
+        };
+
+      });
+
+    setBanks(updatedBanks);
+
+    const connectedConsent =
+      consents.find(
+        item => item.connected === true
+      );
+
+    if (connectedConsent?.permissions) {
+
+      setPermissions((prevPermissions) =>
+        prevPermissions.map((permission) => ({
+          ...permission,
+          granted:
+            connectedConsent.permissions[
+              permission.id
+            ] || false
+        }))
+      );
+
+    } else {
+
+      setPermissions(INITIAL_PERMISSIONS);
+
+    }
+
+  };
+
+  // =========================
+  // CARREGAR TELA
+  // =========================
+  const loadScreenData = async () => {
+
+    try {
+
+      setLoading(true);
+
+      const {
+        balancesData
+      } = await loadApiData();
+
+      await loadConsents(
+        balancesData
+      );
+
+    } catch (error) {
+
+      console.error(
+        'Erro ao carregar Open Finance:',
+        error
+      );
+
     } finally {
 
       setLoading(false);
 
     }
+
   };
 
   // =========================
@@ -193,9 +375,39 @@ export default function OpenFinance({
   // =========================
   useFocusEffect(
     useCallback(() => {
-      loadApiData();
+      loadScreenData();
     }, [])
   );
+
+  // =========================
+  // SALVAR PERMISSÕES NOS BANCOS CONECTADOS
+  // =========================
+  const syncPermissionsWithConnectedBanks = async (
+    updatedPermissions: PermissionOption[],
+    updatedBanks: BankOption[]
+  ) => {
+
+    if (!user?.uid) return;
+
+    const permissionsObject =
+      getPermissionsObject(updatedPermissions);
+
+    const connectedBanks =
+      updatedBanks.filter(
+        bank => bank.connected
+      );
+
+    for (const bank of connectedBanks) {
+
+      await openFinanceConsentService.updatePermissions(
+        user.uid,
+        bank.id,
+        permissionsObject
+      );
+
+    }
+
+  };
 
   // =========================
   // SOLICITAR AUTORIZAÇÃO DO BANCO
@@ -204,11 +416,21 @@ export default function OpenFinance({
     selectedBank: BankOption
   ) => {
 
+    if (!user?.uid) {
+
+      Alert.alert(
+        'Erro',
+        'Usuário não autenticado.'
+      );
+
+      return;
+    }
+
     if (selectedBank.connected) {
 
       Alert.alert(
         'Desconectar instituição',
-        `Deseja remover a autorização simulada do ${selectedBank.name}?`,
+        `Deseja remover a autorização simulada do ${selectedBank.name}? As transações importadas deste banco também serão removidas dos seus lançamentos, fazendo a Dashboard voltar ao valor anterior.`,
         [
           {
             text: 'Cancelar',
@@ -217,18 +439,70 @@ export default function OpenFinance({
           {
             text: 'Desconectar',
             style: 'destructive',
-            onPress: () => {
-              setBanks((prevBanks) =>
-                prevBanks.map((bank) =>
-                  bank.id === selectedBank.id
-                    ? {
-                        ...bank,
-                        connected: false,
-                        lastSync: 'Não sincronizado'
-                      }
-                    : bank
-                )
-              );
+            onPress: async () => {
+
+              try {
+
+                setLoading(true);
+
+                await openFinanceConsentService
+                  .removeBankConsent(
+                    user.uid,
+                    selectedBank.id
+                  );
+
+                const removeResult =
+                  await transactionService
+                    .removeOpenFinanceTransactionsByBank(
+                      user.uid,
+                      selectedBank.accountId
+                    );
+
+                const updatedBanks =
+                  banks.map((bank) =>
+                    bank.id === selectedBank.id
+                      ? {
+                          ...bank,
+                          connected: false,
+                          lastSync: 'Não sincronizado'
+                        }
+                      : bank
+                  );
+
+                setBanks(updatedBanks);
+
+                const stillHasConnectedBank =
+                  updatedBanks.some(
+                    bank => bank.connected
+                  );
+
+                if (!stillHasConnectedBank) {
+                  setPermissions(INITIAL_PERMISSIONS);
+                }
+
+                Alert.alert(
+                  'Banco desconectado',
+                  `${selectedBank.name} foi desconectado.\n${removeResult.removedCount} transação(ões) importada(s) foram removida(s).`
+                );
+
+              } catch (error) {
+
+                console.error(
+                  'Erro ao desconectar banco:',
+                  error
+                );
+
+                Alert.alert(
+                  'Erro',
+                  'Não foi possível desconectar o banco e remover os dados importados.'
+                );
+
+              } finally {
+
+                setLoading(false);
+
+              }
+
             }
           }
         ]
@@ -247,18 +521,57 @@ export default function OpenFinance({
         },
         {
           text: 'Autorizar',
-          onPress: () => {
-            setBanks((prevBanks) =>
-              prevBanks.map((bank) =>
-                bank.id === selectedBank.id
-                  ? {
-                      ...bank,
-                      connected: true,
-                      lastSync: 'Agora'
-                    }
-                  : bank
-              )
-            );
+          onPress: async () => {
+
+            try {
+
+              setLoading(true);
+
+              const updatedBanks =
+                banks.map((bank) =>
+                  bank.id === selectedBank.id
+                    ? {
+                        ...bank,
+                        connected: true,
+                        lastSync: 'Agora'
+                      }
+                    : bank
+                );
+
+              const permissionsObject =
+                getPermissionsObject(permissions);
+
+              await openFinanceConsentService
+                .saveBankConsent({
+                  user_id: user.uid,
+                  bank_id: selectedBank.id,
+                  bank_name: selectedBank.name,
+                  account_id: selectedBank.accountId,
+                  account_type: selectedBank.accountType,
+                  connected: true,
+                  permissions: permissionsObject
+                });
+
+              setBanks(updatedBanks);
+
+            } catch (error) {
+
+              console.error(
+                'Erro ao autorizar banco:',
+                error
+              );
+
+              Alert.alert(
+                'Erro',
+                'Não foi possível salvar a autorização do banco.'
+              );
+
+            } finally {
+
+              setLoading(false);
+
+            }
+
           }
         }
       ]
@@ -273,6 +586,21 @@ export default function OpenFinance({
     selectedPermission: PermissionOption
   ) => {
 
+    const connectedBanks =
+      banks.filter(
+        bank => bank.connected
+      );
+
+    if (connectedBanks.length === 0) {
+
+      Alert.alert(
+        'Nenhum banco conectado',
+        'Autorize pelo menos uma instituição antes de conceder permissões.'
+      );
+
+      return;
+    }
+
     if (selectedPermission.granted) {
 
       Alert.alert(
@@ -286,17 +614,41 @@ export default function OpenFinance({
           {
             text: 'Revogar',
             style: 'destructive',
-            onPress: () => {
-              setPermissions((prevPermissions) =>
-                prevPermissions.map((permission) =>
-                  permission.id === selectedPermission.id
-                    ? {
-                        ...permission,
-                        granted: false
-                      }
-                    : permission
-                )
-              );
+            onPress: async () => {
+
+              try {
+
+                const updatedPermissions =
+                  permissions.map((permission) =>
+                    permission.id === selectedPermission.id
+                      ? {
+                          ...permission,
+                          granted: false
+                        }
+                      : permission
+                  );
+
+                setPermissions(updatedPermissions);
+
+                await syncPermissionsWithConnectedBanks(
+                  updatedPermissions,
+                  banks
+                );
+
+              } catch (error) {
+
+                console.error(
+                  'Erro ao revogar permissão:',
+                  error
+                );
+
+                Alert.alert(
+                  'Erro',
+                  'Não foi possível revogar a permissão.'
+                );
+
+              }
+
             }
           }
         ]
@@ -315,17 +667,41 @@ export default function OpenFinance({
         },
         {
           text: 'Permitir',
-          onPress: () => {
-            setPermissions((prevPermissions) =>
-              prevPermissions.map((permission) =>
-                permission.id === selectedPermission.id
-                  ? {
-                      ...permission,
-                      granted: true
-                    }
-                  : permission
-              )
-            );
+          onPress: async () => {
+
+            try {
+
+              const updatedPermissions =
+                permissions.map((permission) =>
+                  permission.id === selectedPermission.id
+                    ? {
+                        ...permission,
+                        granted: true
+                      }
+                    : permission
+                );
+
+              setPermissions(updatedPermissions);
+
+              await syncPermissionsWithConnectedBanks(
+                updatedPermissions,
+                banks
+              );
+
+            } catch (error) {
+
+              console.error(
+                'Erro ao conceder permissão:',
+                error
+              );
+
+              Alert.alert(
+                'Erro',
+                'Não foi possível salvar a permissão.'
+              );
+
+            }
+
           }
         }
       ]
@@ -350,6 +726,11 @@ export default function OpenFinance({
       return;
     }
 
+    const bankTransactions =
+      transactions.filter(
+        item => item.accountId === bank.accountId
+      );
+
     navigation.navigate(
       'OpenFinanceBankDetails',
       {
@@ -360,23 +741,8 @@ export default function OpenFinance({
         currency: 'BRL',
         connected: bank.connected,
         lastSync: bank.lastSync,
-        transactions,
-        permissions: {
-          balance:
-            permissions.find(
-              item => item.id === 'balance'
-            )?.granted || false,
-
-          transactions:
-            permissions.find(
-              item => item.id === 'transactions'
-            )?.granted || false,
-
-          personalData:
-            permissions.find(
-              item => item.id === 'personalData'
-            )?.granted || false
-        }
+        transactions: bankTransactions,
+        permissions: getPermissionsObject(permissions)
       }
     );
 
@@ -390,6 +756,11 @@ export default function OpenFinance({
     const connectedBanks =
       banks.filter(
         bank => bank.connected
+      );
+
+    const connectedAccountIds =
+      connectedBanks.map(
+        bank => bank.accountId
       );
 
     const canReadTransactions =
@@ -453,23 +824,29 @@ export default function OpenFinance({
                   ? result.transactions
                   : transactions;
 
-              const transactionsToImport: Transaction[] =
-                connectedBanks.flatMap((bank) =>
-                  apiTransactions.map(
-                    (item: OpenFinanceTransaction) => ({
-                      description: item.description,
-                      amount: item.amount,
-                      type: item.type,
-                      category: item.category,
+              const authorizedTransactions =
+                apiTransactions.filter(
+                  item =>
+                    connectedAccountIds.includes(
+                      item.accountId
+                    )
+                );
 
-                      external_id: `${bank.id}_${item.id}`,
-                      source: 'open_finance_mock',
-                      bank_name: bank.name,
-                      account_id: bank.accountId,
-                      original_date: item.date,
-                      is_fixed: false
-                    })
-                  )
+              const transactionsToImport: Transaction[] =
+                authorizedTransactions.map(
+                  (item: OpenFinanceTransaction) => ({
+                    description: item.description,
+                    amount: item.amount,
+                    type: item.type,
+                    category: item.category,
+
+                    external_id: item.id,
+                    source: 'open_finance_mock',
+                    bank_name: item.bankName,
+                    account_id: item.accountId,
+                    original_date: item.date,
+                    is_fixed: false
+                  })
                 );
 
               const importResult =
@@ -479,23 +856,34 @@ export default function OpenFinance({
                     transactionsToImport
                   );
 
-              Alert.alert(
-                'Sincronização concluída',
-                `${importResult.importedCount} transação(ões) importada(s).\n${importResult.skippedCount} transação(ões) ignorada(s) por já existirem ou por dados inválidos.`
-              );
+              for (const bank of connectedBanks) {
 
-              setBanks((prevBanks) =>
-                prevBanks.map((bank) =>
+                await openFinanceConsentService
+                  .updateLastSync(
+                    user.uid,
+                    bank.id
+                  );
+
+              }
+
+              const updatedBanks =
+                banks.map((bank) =>
                   bank.connected
                     ? {
                         ...bank,
                         lastSync: 'Agora'
                       }
                     : bank
-                )
+                );
+
+              setBanks(updatedBanks);
+
+              Alert.alert(
+                'Sincronização concluída',
+                `${importResult.importedCount} transação(ões) importada(s).\n${importResult.skippedCount} transação(ões) ignorada(s) por já existirem ou por dados inválidos.`
               );
 
-              loadApiData();
+              loadScreenData();
 
             } catch (error) {
 
@@ -559,7 +947,7 @@ export default function OpenFinance({
 
         <TouchableOpacity
           style={styles.headerButton}
-          onPress={loadApiData}
+          onPress={loadScreenData}
         >
 
           <MaterialCommunityIcons

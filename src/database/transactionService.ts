@@ -149,7 +149,9 @@ export const transactionService = {
       transactions.push({
         id: document.id,
         ...data,
-        is_fixed: data.is_fixed || isFixedDescription(data.description)
+        is_fixed:
+          data.is_fixed ||
+          isFixedDescription(data.description)
       });
 
     });
@@ -283,6 +285,42 @@ export const transactionService = {
     return {
       importedCount,
       skippedCount
+    };
+
+  },
+
+  // =========================
+  // REMOVER TRANSAÇÕES IMPORTADAS DE UM BANCO
+  // =========================
+  removeOpenFinanceTransactionsByBank: async (
+    userId: string,
+    accountId: string
+  ): Promise<{
+    removedCount: number;
+  }> => {
+
+    const q = query(
+      collection(db, COLLECTION_NAME),
+      where('user_id', '==', userId),
+      where('source', '==', 'open_finance_mock'),
+      where('account_id', '==', accountId)
+    );
+
+    const snapshot = await getDocs(q);
+
+    let removedCount = 0;
+
+    for (const document of snapshot.docs) {
+
+      await deleteDoc(
+        doc(db, COLLECTION_NAME, document.id)
+      );
+
+      removedCount++;
+    }
+
+    return {
+      removedCount
     };
 
   },
