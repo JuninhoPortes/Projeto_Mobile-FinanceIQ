@@ -1,5 +1,7 @@
 import React, {
-  useState
+  useState,
+  useEffect,
+  useRef
 } from 'react';
 
 import {
@@ -55,6 +57,59 @@ export default function Login({
 
   const [isLoginTab, setIsLoginTab] =
     useState(true);
+
+  // ESTADO PARA CONTROLAR A VISUALIZAÇÃO DA SENHA
+  const [showPassword, setShowPassword] = 
+    useState(false);
+
+  // 📝 ESTADOS PARA MENSAGENS DE ERRO
+  const [emailError, setEmailError] = useState('');
+  const [passwordError, setPasswordError] = useState('');
+
+  // REFS PARA NAVEGAÇÃO ENTRE CAMPOS COM O TECLADO
+  const emailRef = useRef<TextInput>(null);
+  const passwordRef = useRef<TextInput>(null);
+
+  // REF DA SCROLLVIEW PARA ROLAR QUANDO SENHA RECEBER FOCO
+  const scrollRef = useRef<ScrollView>(null);
+
+  // ==========================================
+  // VALIDAÇÃO DO EMAIL — SOMENTE AO SAIR DO CAMPO
+  // ==========================================
+  const handleEmailBlur = () => {
+    if (email.length > 0) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      if (!emailRegex.test(email.trim())) {
+        setEmailError('Formato de e-mail inválido (ex: seu@email.com).');
+      } else {
+        setEmailError('');
+      }
+    } else {
+      setEmailError('');
+    }
+  };
+
+  // ==========================================
+  // VALIDAÇÃO DA SENHA — EM TEMPO REAL
+  // ==========================================
+  useEffect(() => {
+    if (!isLoginTab && password.length > 0) {
+      const hasNumber = /\d/.test(password);
+      const hasSpecial = /[@$!%*?&#]/.test(password);
+      
+      if (password.length < 6) {
+        setPasswordError('A senha deve ter pelo menos 6 caracteres.');
+      } else if (!hasNumber) {
+        setPasswordError('A senha precisa conter pelo menos 1 número.');
+      } else if (!hasSpecial) {
+        setPasswordError('A senha precisa conter pelo menos 1 caractere especial (ex: @, #, $, !).');
+      } else {
+        setPasswordError('');
+      }
+    } else {
+      setPasswordError('');
+    }
+  }, [password, isLoginTab]);
 
   // =========================
   // LOGIN
@@ -165,6 +220,24 @@ export default function Login({
       return;
     }
 
+    // BLOQUEIA O CADASTRO SE O EMAIL TIVER ERRO
+    if (emailError) {
+      Alert.alert(
+        'Atenção',
+        'Corrija o e-mail antes de continuar.'
+      );
+      return;
+    }
+
+    // BLOQUEIA O CADASTRO SE A SENHA TIVER ERRO
+    if (passwordError) {
+      Alert.alert(
+        'Atenção',
+        'Corrija a senha antes de continuar.'
+      );
+      return;
+    }
+
     if (password.length < 6) {
 
       Alert.alert(
@@ -172,6 +245,18 @@ export default function Login({
         'Senha mínima de 6 caracteres.'
       );
 
+      return;
+    }
+
+    // BLOQUEIA SE A SENHA NÃO TIVER NÚMERO OU CARACTERE ESPECIAL
+    const hasNumber = /\d/.test(password);
+    const hasSpecial = /[@$!%*?&#]/.test(password);
+
+    if (!hasNumber || !hasSpecial) {
+      Alert.alert(
+        'Atenção',
+        'A senha precisa ter pelo menos 1 número e 1 caractere especial (ex: @, #, $, !).'
+      );
       return;
     }
 
@@ -255,7 +340,16 @@ export default function Login({
 
     setDisplayName('');
 
+    setEmail('');
+
     setPassword('');
+
+    setEmailError('');
+
+    setPasswordError('');
+    
+    // Reseta o olho para oculto ao trocar de aba
+    setShowPassword(false);
   };
 
   return (
@@ -278,6 +372,7 @@ export default function Login({
         >
 
           <ScrollView
+            ref={scrollRef}
             contentContainerStyle={
               styles.scrollContainer
             }
@@ -397,9 +492,10 @@ export default function Login({
                         placeholder="Seu nome"
                         placeholderTextColor="#999"
                         value={displayName}
-                        onChangeText={
-                          setDisplayName
-                        }
+                        onChangeText={setDisplayName}
+                        returnKeyType="next"
+                        onSubmitEditing={() => emailRef.current?.focus()}
+                        blurOnSubmit={false}
                       />
 
                     </View>
@@ -424,16 +520,36 @@ export default function Login({
                   />
 
                   <TextInput
+                    ref={emailRef}
                     style={styles.input}
                     placeholder="seu@email.com"
                     placeholderTextColor="#999"
                     value={email}
-                    onChangeText={setEmail}
+                    onChangeText={(text) => {
+                      setEmail(text);
+                      // Limpa o erro enquanto o usuário corrige
+                      if (emailError) setEmailError('');
+                    }}
                     autoCapitalize="none"
                     keyboardType="email-address"
+                    returnKeyType="next"
+                    onSubmitEditing={() => passwordRef.current?.focus()}
+                    blurOnSubmit={false}
+                    onBlur={handleEmailBlur}
+                    onFocus={() => {
+                      setTimeout(() => {
+                        scrollRef.current?.scrollTo({ y: 100, animated: true });
+                      }, 300);
+                    }}
                   />
 
                 </View>
+
+                {!!emailError && (
+                  <Text style={styles.errorText}>
+                    {emailError}
+                  </Text>
+                )}
 
                 {/* SENHA */}
                 <Text style={styles.label}>
@@ -452,17 +568,47 @@ export default function Login({
                   />
 
                   <TextInput
+                    ref={passwordRef}
                     style={styles.input}
                     placeholder="********"
                     placeholderTextColor="#999"
-                    secureTextEntry
+                    secureTextEntry={!showPassword}
                     value={password}
-                    onChangeText={
-                      setPassword
+                    onChangeText={setPassword}
+                    returnKeyType="done"
+                    onSubmitEditing={
+                      isLoginTab
+                        ? handleLogin
+                        : handleSignUp
                     }
+                    blurOnSubmit={true}
+                    onFocus={() => {
+                      setTimeout(() => {
+                        scrollRef.current?.scrollToEnd({ animated: true });
+                      }, 300);
+                    }}
                   />
 
+                  {/* BOTÃO DO OLHO IMPLEMENTADO */}
+                  <TouchableOpacity
+                    onPress={() => setShowPassword(!showPassword)}
+                    style={styles.eyeIcon}
+                  >
+                    <MaterialCommunityIcons
+                      name={showPassword ? "eye-off-outline" : "eye-outline"}
+                      size={22}
+                      color="#999"
+                    />
+                  </TouchableOpacity>
+
                 </View>
+
+                {/* ERRO DA SENHA — SÓ APARECE NA ABA CRIAR CONTA */}
+                {!isLoginTab && !!passwordError && (
+                  <Text style={styles.errorText}>
+                    {passwordError}
+                  </Text>
+                )}
 
                 {/* BOTÃO */}
                 <TouchableOpacity
@@ -621,6 +767,19 @@ const styles = StyleSheet.create({
   input: {
     flex: 1,
     color: '#333'
+  },
+
+  eyeIcon: {
+    padding: 5
+  },
+
+  // ESTILO ÚNICO PARA TODOS OS ERROS
+  errorText: {
+    color: '#e74c3c',
+    fontSize: 12,
+    marginBottom: 15,
+    paddingLeft: 5,
+    fontWeight: '500'
   },
 
   button: {

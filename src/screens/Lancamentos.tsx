@@ -50,6 +50,42 @@ export default function Lancamentos() {
   const user = auth.currentUser;
 
   // =========================
+  // FUNÇÃO DE MÁSCARA MONETÁRIA
+  // =========================
+  const formatMoney = (text: string) => {
+    // Remove tudo o que não for número
+    const cleanText = text.replace(/\D/g, '');
+    
+    if (!cleanText) {
+      return '';
+    }
+
+    // Transforma a string de números para float considerando os centavos
+    const valueFloat = parseFloat(cleanText) / 100;
+
+    // Retorna formatado no padrão PT-BR (1.250,50)
+    return valueFloat.toLocaleString('pt-BR', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+  };
+
+  // Funções Auxiliares para Conversão no Banco
+  const moneyToFloat = (valueStr: string): number => {
+    if (!valueStr) return 0;
+    // Remove os pontos de milhar e troca a vírgula decimal por ponto
+    const cleanStr = valueStr.replace(/\./g, '').replace(',', '.');
+    return parseFloat(cleanStr);
+  };
+
+  const floatToMoney = (valueNum: number): string => {
+    return valueNum.toLocaleString('pt-BR', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
+  };
+
+  // =========================
   // CARREGAR DADOS
   // =========================
   const loadData = async () => {
@@ -126,8 +162,9 @@ export default function Lancamentos() {
       transaction.description
     );
 
+    // Carrega o valor já formatado com a máscara na edição
     setAmount(
-      transaction.amount.toString()
+      floatToMoney(transaction.amount)
     );
 
     setType(transaction.type);
@@ -204,9 +241,13 @@ export default function Lancamentos() {
 
     try {
 
-      const parsedAmount = parseFloat(
-        amount.replace(',', '.')
-      );
+      // Transforma o texto mascarado de volta em um número flutuante válido (Ex: "1.500,30" -> 1500.3)
+      const parsedAmount = moneyToFloat(amount);
+
+      if (isNaN(parsedAmount) || parsedAmount <= 0) {
+        Alert.alert('Erro', 'Insira um valor válido maior que zero.');
+        return;
+      }
 
       // =========================
       // EDITAR
@@ -581,7 +622,11 @@ export default function Lancamentos() {
                   placeholder="0,00"
                   keyboardType="numeric"
                   value={amount}
-                  onChangeText={setAmount}
+                  onChangeText={(text) => {
+                    // Executa a formatação dinâmica e atualiza o estado
+                    const formatted = formatMoney(text);
+                    setAmount(formatted);
+                  }}
                 />
 
                 {/* DESCRIÇÃO */}
