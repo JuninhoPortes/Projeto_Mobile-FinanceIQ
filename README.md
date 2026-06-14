@@ -130,26 +130,38 @@ As transações importadas pelo Open Finance Mock passam a integrar o cálculo d
 
 ### Indicadores Econômicos
 
-O app consome uma API de Indicadores Econômicos por meio do **Axios**.
+O app consome indicadores econômicos por meio da API própria financeiq-api, utilizando Axios para realizar a comunicação entre o frontend mobile e o backend.
 
 Os indicadores exibidos na Dashboard são:
 
-* Selic;
-* IPCA;
-* Dólar.
+Selic;
+IPCA;
+Dólar Comercial.
 
-Esses dados são fornecidos pelo backend `financeiq-api` e exibidos na tela inicial para oferecer contexto econômico ao usuário.
+Diferente da primeira versão simulada, os indicadores econômicos agora são obtidos a partir de APIs públicas reais. O backend é responsável por buscar os dados externos, tratar as respostas e retornar as informações para o aplicativo mobile.
+
+Fontes utilizadas:
+
+Selic: BrasilAPI;
+IPCA: BrasilAPI;
+Dólar Comercial: ExchangeRate-API.
 
 Endpoints utilizados:
 
-```text
 GET /indicators/selic
 GET /indicators/ipca
 GET /indicators/dollar
 GET /indicators/summary
-```
 
-Nesta versão, os indicadores são simulados pelo backend para fins acadêmicos.
+Fluxo simplificado:
+
+Dashboard
+→ Axios
+→ financeiq-api
+→ APIs públicas externas
+→ retorno dos indicadores econômicos
+
+Esse fluxo mantém a separação entre frontend e backend, evitando que o aplicativo mobile dependa diretamente de múltiplas fontes externas. Além disso, o backend mantém respostas de fallback caso alguma API pública esteja temporariamente indisponível.
 
 ---
 
