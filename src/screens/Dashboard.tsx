@@ -423,7 +423,7 @@ export default function Dashboard() {
           </View>
 
           <Text style={styles.indicatorsDescription}>
-            Dados econômicos simulados via API FinanceIQ para apoiar a análise financeira do usuário.
+            Indicadores econômicos reais obtidos via API FinanceIQ para apoiar a análise financeira do usuário.
           </Text>
 
           <View style={styles.indicatorGrid}>
@@ -446,13 +446,13 @@ export default function Dashboard() {
               icon="currency-usd"
               title="Dólar"
               value={formatIndicatorValue(dollar, true)}
-              subtitle="Cotação simulada"
+              subtitle="Cotação atual"
             />
 
           </View>
 
           <Text style={styles.indicatorsSource}>
-            Fonte: API FinanceIQ • Open Finance Mock + Indicadores Econômicos
+            Fonte: BrasilAPI • ExchangeRate-API • via API FinanceIQ
           </Text>
 
         </View>
