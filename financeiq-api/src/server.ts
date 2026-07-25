@@ -1,4 +1,4 @@
-import express from 'express';
+import express, { Request, Response } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 
@@ -9,13 +9,13 @@ dotenv.config();
 
 const app = express();
 
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 app.use(cors());
 
 app.use(express.json());
 
-app.get('/health', (req, res) => {
+app.get('/health', (_req: Request, res: Response) => {
   return res.status(200).json({
     status: 'ok',
     message: 'FinanceIQ API funcionando corretamente.',
@@ -27,13 +27,13 @@ app.use('/open-finance', openFinanceRoutes);
 
 app.use('/indicators', indicatorsRoutes);
 
-app.use((req, res) => {
+app.use((_req: Request, res: Response) => {
   return res.status(404).json({
     error: true,
     message: 'Rota não encontrada.'
   });
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`FinanceIQ API rodando na porta ${PORT}`);
 });
