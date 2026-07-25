@@ -24,7 +24,16 @@ import {
   Transaction
 } from '../database/transactionService';
 
-// ✅ AUTH CENTRALIZADO
+import {
+  categoryService,
+  Category
+} from '../database/categoryService';
+
+import {
+  categorySuggestionService,
+  CategorySuggestion
+} from '../services/categorySuggestionService';
+
 import { auth } from '../../firebaseConfig';
 
 export default function Lancamentos() {
@@ -43,7 +52,15 @@ export default function Lancamentos() {
   const [type, setType] =
     useState<'income' | 'outcome'>('outcome');
 
-  // ✅ MODO EDIÇÃO
+  const [availableCategories, setAvailableCategories] =
+    useState<Category[]>([]);
+
+  const [selectedCategoryName, setSelectedCategoryName] =
+    useState('');
+
+  const [categorySuggestion, setCategorySuggestion] =
+    useState<CategorySuggestion | null>(null);
+
   const [editingTransaction, setEditingTransaction] =
     useState<Transaction | null>(null);
 
@@ -53,37 +70,125 @@ export default function Lancamentos() {
   // FUNÇÃO DE MÁSCARA MONETÁRIA
   // =========================
   const formatMoney = (text: string) => {
-    // Remove tudo o que não for número
     const cleanText = text.replace(/\D/g, '');
-    
+
     if (!cleanText) {
       return '';
     }
 
-    // Transforma a string de números para float considerando os centavos
     const valueFloat = parseFloat(cleanText) / 100;
 
-    // Retorna formatado no padrão PT-BR (1.250,50)
     return valueFloat.toLocaleString('pt-BR', {
       minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
+      maximumFractionDigits: 2
     });
   };
 
-  // Funções Auxiliares para Conversão no Banco
   const moneyToFloat = (valueStr: string): number => {
     if (!valueStr) return 0;
-    // Remove os pontos de milhar e troca a vírgula decimal por ponto
-    const cleanStr = valueStr.replace(/\./g, '').replace(',', '.');
+
+    const cleanStr = valueStr
+      .replace(/\./g, '')
+      .replace(',', '.');
+
     return parseFloat(cleanStr);
   };
 
   const floatToMoney = (valueNum: number): string => {
     return valueNum.toLocaleString('pt-BR', {
       minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
+      maximumFractionDigits: 2
     });
   };
+
+  // =========================
+  // AUXILIARES DE CATEGORIA
+  // =========================
+  const normalizeText = (value: string) => {
+    return value
+      .trim()
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '');
+  };
+
+  const getDefaultCategoryForType = (
+    selectedType: 'income' | 'outcome',
+    categories: Category[]
+  ) => {
+    if (selectedType === 'income') {
+      return (
+        categories.find(
+          category =>
+            category.type === 'income' &&
+            normalizeText(category.name) === 'receita'
+        )?.name || 'Receita'
+      );
+    }
+
+    return (
+      categories.find(
+        category =>
+          category.type === 'outcome' &&
+          normalizeText(category.name) === 'outros'
+      )?.name ||
+      categories.find(
+        category => category.type === 'outcome'
+      )?.name ||
+      'Outros'
+    );
+  };
+
+  const getCategoriesByType = () => {
+    return availableCategories.filter(
+      category =>
+        category.is_active &&
+        category.type === type
+    );
+  };
+
+  const handleChangeType = (
+    selectedType: 'income' | 'outcome'
+  ) => {
+    setType(selectedType);
+
+    setSelectedCategoryName('');
+
+    setCategorySuggestion(null);
+  };
+
+  const applySuggestedCategory = () => {
+    if (categorySuggestion?.category) {
+      setSelectedCategoryName(
+        categorySuggestion.category.name
+      );
+    }
+  };
+
+  const isFixedTransaction = (
+    transaction?: Transaction | null
+  ) => {
+    if (!transaction) {
+      return false;
+    }
+
+    return [
+      'Salário Mensal',
+      'Moradia',
+      'Transporte',
+      'Alimentação'
+    ].includes(transaction.description);
+  };
+  
+  const handleSelectCategory = (categoryName: string) => {
+  setSelectedCategoryName((currentCategory) => {
+    if (currentCategory === categoryName) {
+      return '';
+    }
+
+    return categoryName;
+  });
+};
 
   // =========================
   // CARREGAR DADOS
@@ -94,12 +199,15 @@ export default function Lancamentos() {
 
     try {
 
-      const data =
-        await transactionService.listAll(
-          user.uid
-        );
+      const [data, categories] =
+        await Promise.all([
+          transactionService.listAll(user.uid),
+          categoryService.listAll(user.uid)
+        ]);
 
       setTransactions(data);
+
+      setAvailableCategories(categories);
 
     } catch (error) {
 
@@ -112,7 +220,7 @@ export default function Lancamentos() {
   };
 
   // =========================
-  // EFFECT
+  // EFFECT: CARREGAR DADOS
   // =========================
   useEffect(() => {
 
@@ -121,13 +229,44 @@ export default function Lancamentos() {
   }, []);
 
   // =========================
+  // EFFECT: SUGESTÃO DE CATEGORIA
+  // =========================
+  useEffect(() => {
+    if (editingTransaction) {
+      return;
+    }
+
+    const suggestion =
+      categorySuggestionService.suggestCategory({
+        description,
+        type,
+        categories: availableCategories
+      });
+
+    setCategorySuggestion(suggestion);
+
+    if (
+      suggestion?.category &&
+      suggestion.shouldAutoSelect
+    ) {
+      setSelectedCategoryName(
+        suggestion.category.name
+      );
+    }
+  }, [
+    description,
+    type,
+    availableCategories,
+    editingTransaction
+  ]);
+
+  // =========================
   // BOTÃO VOLTAR ANDROID
   // =========================
   useEffect(() => {
 
     const backAction = () => {
 
-      // ✅ FECHA O MODAL
       if (modalVisible) {
 
         closeModal();
@@ -135,7 +274,6 @@ export default function Lancamentos() {
         return true;
       }
 
-      // ❌ LIBERA O RESTO DA NAVEGAÇÃO
       return false;
     };
 
@@ -147,7 +285,7 @@ export default function Lancamentos() {
 
     return () => backHandler.remove();
 
-  }, [modalVisible]);
+  }, [modalVisible, availableCategories]);
 
   // =========================
   // ABRIR MODAL PARA EDITAR
@@ -162,12 +300,17 @@ export default function Lancamentos() {
       transaction.description
     );
 
-    // Carrega o valor já formatado com a máscara na edição
     setAmount(
       floatToMoney(transaction.amount)
     );
 
     setType(transaction.type);
+
+    setSelectedCategoryName(
+      transaction.category
+    );
+
+    setCategorySuggestion(null);
 
     setModalVisible(true);
   };
@@ -219,11 +362,21 @@ export default function Lancamentos() {
   // =========================
   const handleSave = async () => {
 
-    if (!description || !amount) {
+    if (!amount) {
 
       Alert.alert(
         'Erro',
-        'Preencha todos os campos.'
+        'Preencha o valor.'
+      );
+
+      return;
+    }
+
+    if (!editingTransaction && !description.trim()) {
+
+      Alert.alert(
+        'Erro',
+        'Preencha a descrição.'
       );
 
       return;
@@ -241,13 +394,27 @@ export default function Lancamentos() {
 
     try {
 
-      // Transforma o texto mascarado de volta em um número flutuante válido (Ex: "1.500,30" -> 1500.3)
       const parsedAmount = moneyToFloat(amount);
 
       if (isNaN(parsedAmount) || parsedAmount <= 0) {
-        Alert.alert('Erro', 'Insira um valor válido maior que zero.');
+        Alert.alert(
+          'Erro',
+          'Insira um valor válido maior que zero.'
+        );
+
         return;
       }
+
+      if (!selectedCategoryName) {
+        Alert.alert(
+          'Categoria obrigatória',
+          'Selecione uma categoria antes de salvar o lançamento.'
+        );
+
+        return;
+      }
+
+      const categoryToSave = selectedCategoryName;
 
       // =========================
       // EDITAR
@@ -257,9 +424,26 @@ export default function Lancamentos() {
         editingTransaction.id
       ) {
 
-        await transactionService.updateAmount(
+        const updateData: Partial<Pick<Transaction, 'amount' | 'category'>> = {
+          amount: parsedAmount
+        };
+
+        if (!isFixedTransaction(editingTransaction)) {
+          if (!selectedCategoryName) {
+            Alert.alert(
+              'Categoria obrigatória',
+              'Selecione uma categoria antes de salvar o lançamento.'
+            );
+
+            return;
+          }
+
+          updateData.category = selectedCategoryName;
+        }
+
+        await transactionService.update(
           editingTransaction.id,
-          parsedAmount
+          updateData
         );
 
       } else {
@@ -270,25 +454,23 @@ export default function Lancamentos() {
         await transactionService.add(
           user.uid,
           {
-            description,
+            description: description.trim(),
             amount: parsedAmount,
             type,
-            category:
-              type === 'income'
-                ? 'Receita'
-                : 'Geral'
+            category: categoryToSave
           }
         );
       }
 
-      // =========================
-      // RESET
-      // =========================
       setDescription('');
 
       setAmount('');
 
       setType('outcome');
+
+      setSelectedCategoryName('');
+
+      setCategorySuggestion(null);
 
       setEditingTransaction(null);
 
@@ -326,6 +508,10 @@ export default function Lancamentos() {
     setAmount('');
 
     setType('outcome');
+
+    setSelectedCategoryName('');
+
+    setCategorySuggestion(null);
   };
 
   // =========================
@@ -338,30 +524,63 @@ export default function Lancamentos() {
     if (item.type === 'income')
       return 'briefcase-outline';
 
+    const category =
+      normalizeText(item.category || '');
+
     const desc =
-      item.description.toLowerCase();
+      normalizeText(item.description || '');
 
     if (
+      category.includes('moradia') ||
       desc.includes('moradia')
     )
       return 'home-outline';
 
     if (
-      desc.includes('transporte')
+      category.includes('transporte') ||
+      desc.includes('transporte') ||
+      desc.includes('uber') ||
+      desc.includes('gasolina')
     )
       return 'car-outline';
 
     if (
-      desc.includes('alimentação')
+      category.includes('alimentacao') ||
+      desc.includes('ifood') ||
+      desc.includes('pizza') ||
+      desc.includes('restaurante')
+    )
+      return 'food';
+
+    if (
+      category.includes('compras') ||
+      desc.includes('mercado') ||
+      desc.includes('supermercado') ||
+      desc.includes('amazon') ||
+      desc.includes('shopee')
     )
       return 'cart-outline';
 
     if (
-      desc.includes('uber') ||
-      desc.includes('pizza') ||
-      desc.includes('ifood')
+      category.includes('saude') ||
+      desc.includes('farmacia') ||
+      desc.includes('consulta')
     )
-      return 'food';
+      return 'medical-bag';
+
+    if (
+      category.includes('lazer') ||
+      desc.includes('netflix') ||
+      desc.includes('spotify')
+    )
+      return 'theater';
+
+    if (
+      category.includes('educacao') ||
+      desc.includes('faculdade') ||
+      desc.includes('curso')
+    )
+      return 'book-open-variant';
 
     return 'cash-multiple';
   };
@@ -391,6 +610,10 @@ export default function Lancamentos() {
             setAmount('');
 
             setType('outcome');
+
+            setSelectedCategoryName('');
+
+            setCategorySuggestion(null);
 
             setModalVisible(true);
           }}
@@ -489,7 +712,6 @@ export default function Lancamentos() {
 
                 </Text>
 
-                {/* LIXEIRA APENAS NOS EXTRAS */}
                 {!isSeeder &&
                   item.id && (
 
@@ -569,7 +791,7 @@ export default function Lancamentos() {
                         styles.typeButtonInActive
                       ]}
                       onPress={() =>
-                        setType('income')
+                        handleChangeType('income')
                       }
                     >
 
@@ -592,7 +814,7 @@ export default function Lancamentos() {
                         styles.typeButtonOutActive
                       ]}
                       onPress={() =>
-                        setType('outcome')
+                        handleChangeType('outcome')
                       }
                     >
 
@@ -623,7 +845,6 @@ export default function Lancamentos() {
                   keyboardType="numeric"
                   value={amount}
                   onChangeText={(text) => {
-                    // Executa a formatação dinâmica e atualiza o estado
                     const formatted = formatMoney(text);
                     setAmount(formatted);
                   }}
@@ -647,8 +868,117 @@ export default function Lancamentos() {
                         setDescription
                       }
                     />
+
+                    {categorySuggestion &&
+                      description.trim() !== '' && (
+
+                        <View style={styles.suggestionBox}>
+
+                          <MaterialCommunityIcons
+                            name={
+                              categorySuggestion.requiresConfirmation
+                                ? 'alert-circle-outline'
+                                : 'lightbulb-on-outline'
+                            }
+                            size={20}
+                            color={
+                              categorySuggestion.requiresConfirmation
+                                ? '#F39C12'
+                                : '#27AE60'
+                            }
+                          />
+
+                          <View style={styles.suggestionTextContainer}>
+
+                            <Text style={styles.suggestionText}>
+                              {categorySuggestion.message}
+                            </Text>
+
+                            {categorySuggestion.category &&
+                              categorySuggestion.requiresConfirmation && (
+
+                                <TouchableOpacity
+                                  style={styles.useSuggestionButton}
+                                  onPress={applySuggestedCategory}
+                                >
+
+                                  <Text style={styles.useSuggestionText}>
+                                    Usar {categorySuggestion.category.name}
+                                  </Text>
+
+                                </TouchableOpacity>
+                              )}
+
+                          </View>
+
+                        </View>
+                      )}
                   </>
 
+                )}
+
+                {/* CATEGORIA */}
+                {(!editingTransaction ||
+                  !isFixedTransaction(editingTransaction)) && (
+
+                  <>
+                    <Text style={styles.inputLabel}>
+                      Categoria
+                    </Text>
+
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      style={styles.categoryScroll}
+                    >
+
+                      {getCategoriesByType().map((category) => {
+
+                        const isSelected =
+                          selectedCategoryName === category.name;
+
+                        return (
+
+                          <TouchableOpacity
+                            key={category.id || category.name}
+                            style={[
+                              styles.categoryChip,
+                              isSelected && {
+                                backgroundColor: category.color,
+                                borderColor: category.color
+                              }
+                            ]}
+                            onPress={() =>
+                              handleSelectCategory(category.name)
+                            }
+                          >
+
+                            <MaterialCommunityIcons
+                              name={category.icon as any}
+                              size={16}
+                              color={
+                                isSelected
+                                  ? '#FFF'
+                                  : category.color
+                              }
+                            />
+
+                            <Text
+                              style={[
+                                styles.categoryChipText,
+                                isSelected &&
+                                styles.categoryChipTextActive
+                              ]}
+                            >
+                              {category.name}
+                            </Text>
+
+                          </TouchableOpacity>
+                        );
+                      })}
+
+                    </ScrollView>
+                  </>
                 )}
 
                 {/* FOOTER */}
@@ -859,6 +1189,68 @@ const styles = StyleSheet.create({
     padding: 15,
     marginBottom: 20,
     fontSize: 16
+  },
+
+  suggestionBox: {
+    backgroundColor: '#FFF8E7',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 16,
+    flexDirection: 'row',
+    alignItems: 'flex-start'
+  },
+
+  suggestionTextContainer: {
+    flex: 1,
+    marginLeft: 8
+  },
+
+  suggestionText: {
+    color: '#7D6608',
+    fontSize: 12,
+    lineHeight: 17
+  },
+
+  useSuggestionButton: {
+    marginTop: 8,
+    alignSelf: 'flex-start',
+    backgroundColor: '#1B365D',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10
+  },
+
+  useSuggestionText: {
+    color: '#FFF',
+    fontSize: 12,
+    fontWeight: 'bold'
+  },
+
+  categoryScroll: {
+    marginBottom: 20
+  },
+
+  categoryChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#DDE3EA',
+    backgroundColor: '#F8F9FA',
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 14,
+    marginRight: 8
+  },
+
+  categoryChipText: {
+    color: '#1B365D',
+    fontSize: 13,
+    fontWeight: 'bold',
+    marginLeft: 6
+  },
+
+  categoryChipTextActive: {
+    color: '#FFF'
   },
 
   modalFooter: {

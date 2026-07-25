@@ -177,6 +177,23 @@ export const transactionService = {
   },
 
   // =========================
+  // ATUALIZAR LANÇAMENTO
+  // =========================
+  update: async (
+    id: string,
+    data: Partial<Pick<Transaction, 'amount' | 'category'>>
+  ) => {
+
+    await updateDoc(
+      doc(db, COLLECTION_NAME, id),
+      {
+        ...data
+      }
+    );
+
+  },
+
+  // =========================
   // ADICIONAR LANÇAMENTO EXTRA
   // =========================
   add: async (
