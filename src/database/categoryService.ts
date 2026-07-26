@@ -4,6 +4,7 @@ import {
   getDocs,
   doc,
   updateDoc,
+  deleteDoc,
   query,
   where,
   serverTimestamp
@@ -221,5 +222,16 @@ export const categoryService = {
         updated_at: serverTimestamp()
       }
     );
-  }
+  },
+  
+  // =========================
+  // REMOVER CATEGORIA
+  // =========================
+    remove: async (
+    id: string
+  ) => {
+    await deleteDoc(
+      doc(db, COLLECTION_NAME, id)
+    );
+  },
 };

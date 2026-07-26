@@ -45,7 +45,7 @@ const formatMoneyInput = (text: string) => {
     return '';
   }
 
-const valueFloat = parseFloat(cleanText) / 100;
+  const valueFloat = parseFloat(cleanText) / 100;
 
   return valueFloat.toLocaleString('pt-BR', {
     minimumFractionDigits: 2,
@@ -64,7 +64,12 @@ export default function Categorias() {
   const [editLimitModalVisible, setEditLimitModalVisible] = useState(false);
   const [editLimitValue, setEditLimitValue] = useState('');
 
+  const [optionsModalVisible, setOptionsModalVisible] = useState(false);
+
   const [selectedCategory, setSelectedCategory] =
+    useState<AnalyzedCategory | null>(null);
+
+  const [optionsCategory, setOptionsCategory] =
     useState<AnalyzedCategory | null>(null);
 
   const [newCategoryName, setNewCategoryName] = useState('');
@@ -130,26 +135,47 @@ export default function Categorias() {
     setDetailModalVisible(false);
   };
 
-  const openEditLimitModal = () => {
-    if (!selectedCategory) {
-      return;
-    }
+  const openEditLimitForCategory = (
+    category: AnalyzedCategory
+  ) => {
+    setSelectedCategory(category);
 
     setEditLimitValue(
-      selectedCategory.monthly_limit.toLocaleString('pt-BR', {
+      category.monthly_limit.toLocaleString('pt-BR', {
         minimumFractionDigits: 2,
         maximumFractionDigits: 2
       })
     );
 
     setDetailModalVisible(false);
+    setOptionsModalVisible(false);
     setEditLimitModalVisible(true);
+  };
+
+  const openEditLimitModal = () => {
+    if (!selectedCategory) {
+      return;
+    }
+
+    openEditLimitForCategory(selectedCategory);
   };
 
   const closeEditLimitModal = () => {
     setEditLimitValue('');
     setEditLimitModalVisible(false);
     setSelectedCategory(null);
+  };
+
+  const openCategoryOptions = (
+    category: AnalyzedCategory
+  ) => {
+    setOptionsCategory(category);
+    setOptionsModalVisible(true);
+  };
+
+  const closeCategoryOptions = () => {
+    setOptionsCategory(null);
+    setOptionsModalVisible(false);
   };
 
   const resetAddForm = () => {
@@ -280,22 +306,77 @@ export default function Categorias() {
     }
   };
 
+  const handleDeleteCategory = async (
+    category: AnalyzedCategory
+  ) => {
+    try {
+      if (!category.id) {
+        Alert.alert(
+          'Erro',
+          'Categoria não encontrada.'
+        );
+
+        return;
+      }
+
+      if (category.is_default) {
+        Alert.alert(
+          'Categoria padrão',
+          'Essa categoria faz parte da estrutura inicial do FinanceIQ e não pode ser excluída.'
+        );
+
+        return;
+      }
+
+      await categoryService.remove(category.id);
+
+      setDetailModalVisible(false);
+      setEditLimitModalVisible(false);
+      setOptionsModalVisible(false);
+      setSelectedCategory(null);
+      setOptionsCategory(null);
+
+      await loadCategories();
+
+      Alert.alert(
+        'Categoria excluída',
+        'A categoria foi excluída com sucesso. Seus lançamentos anteriores foram mantidos.'
+      );
+    } catch (error) {
+      console.error('Erro ao excluir categoria:', error);
+
+      Alert.alert(
+        'Erro',
+        'Não foi possível excluir a categoria.'
+      );
+    }
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Categorias</Text>
+        <Text style={styles.headerTitle}>
+          Categorias
+        </Text>
 
         <TouchableOpacity
           style={styles.addButton}
           onPress={() => setAddModalVisible(true)}
         >
-          <MaterialCommunityIcons name="plus" size={24} color="#FFF" />
+          <MaterialCommunityIcons
+            name="plus"
+            size={24}
+            color="#FFF"
+          />
         </TouchableOpacity>
       </View>
 
       {loading ? (
         <View style={styles.loadingContainer}>
-          <ActivityIndicator size="large" color="#1B365D" />
+          <ActivityIndicator
+            size="large"
+            color="#1B365D"
+          />
 
           <Text style={styles.loadingText}>
             Carregando categorias...
@@ -324,6 +405,7 @@ export default function Categorias() {
                 key={category.id || category.name}
                 category={category}
                 onPress={() => openCategoryDetails(category)}
+                onLongPress={() => openCategoryOptions(category)}
               />
             ))}
           </View>
@@ -348,28 +430,33 @@ export default function Categorias() {
         </ScrollView>
       )}
 
-        <AddCategoryModal
-          visible={addModalVisible}
-          name={newCategoryName}
-          limit={newCategoryLimit}
-          onChangeName={setNewCategoryName}
-          onChangeLimit={(value) =>
-            setNewCategoryLimit(
-              formatMoneyInput(value)
-            )
-          }
-          onClose={() => {
-            resetAddForm();
-            setAddModalVisible(false);
-          }}
-          onSave={handleAddCategory}
-        />
+      <AddCategoryModal
+        visible={addModalVisible}
+        name={newCategoryName}
+        limit={newCategoryLimit}
+        onChangeName={setNewCategoryName}
+        onChangeLimit={(value) =>
+          setNewCategoryLimit(
+            formatMoneyInput(value)
+          )
+        }
+        onClose={() => {
+          resetAddForm();
+          setAddModalVisible(false);
+        }}
+        onSave={handleAddCategory}
+      />
 
       <CategoryDetailModal
         visible={detailModalVisible}
         category={selectedCategory}
         onClose={closeCategoryDetails}
         onEditLimit={openEditLimitModal}
+        onDeleteCategory={() => {
+          if (selectedCategory) {
+            handleDeleteCategory(selectedCategory);
+          }
+        }}
       />
 
       <EditLimitModal
@@ -383,6 +470,22 @@ export default function Categorias() {
         }
         onClose={closeEditLimitModal}
         onSave={handleUpdateCategoryLimit}
+      />
+
+      <CategoryOptionsModal
+        visible={optionsModalVisible}
+        category={optionsCategory}
+        onClose={closeCategoryOptions}
+        onEdit={() => {
+          if (optionsCategory) {
+            openEditLimitForCategory(optionsCategory);
+          }
+        }}
+        onDelete={() => {
+          if (optionsCategory) {
+            handleDeleteCategory(optionsCategory);
+          }
+        }}
       />
     </SafeAreaView>
   );
@@ -426,21 +529,30 @@ const SummaryCard = ({ summary }: SummaryCardProps) => {
 
       <View style={styles.summaryValues}>
         <View style={styles.summaryItem}>
-          <Text style={styles.summaryLabel}>Gasto</Text>
+          <Text style={styles.summaryLabel}>
+            Gasto
+          </Text>
+
           <Text style={styles.summaryValue}>
             {formatCurrency(summary.totalSpent)}
           </Text>
         </View>
 
         <View style={styles.summaryItem}>
-          <Text style={styles.summaryLabel}>Planejado</Text>
+          <Text style={styles.summaryLabel}>
+            Planejado
+          </Text>
+
           <Text style={styles.summaryValue}>
             {formatCurrency(summary.totalLimit)}
           </Text>
         </View>
 
         <View style={styles.summaryItem}>
-          <Text style={styles.summaryLabel}>Restante</Text>
+          <Text style={styles.summaryLabel}>
+            Restante
+          </Text>
+
           <Text
             style={[
               styles.summaryValue,
@@ -493,14 +605,21 @@ const SummaryCard = ({ summary }: SummaryCardProps) => {
 interface CategoryCardProps {
   category: AnalyzedCategory;
   onPress: () => void;
+  onLongPress: () => void;
 }
 
-const CategoryCard = ({ category, onPress }: CategoryCardProps) => {
+const CategoryCard = ({
+  category,
+  onPress,
+  onLongPress
+}: CategoryCardProps) => {
   return (
     <TouchableOpacity
       style={styles.card}
       activeOpacity={0.85}
       onPress={onPress}
+      onLongPress={onLongPress}
+      delayLongPress={600}
     >
       <View style={styles.cardHeader}>
         <View
@@ -674,17 +793,21 @@ interface CategoryDetailModalProps {
   category: AnalyzedCategory | null;
   onClose: () => void;
   onEditLimit: () => void;
+  onDeleteCategory: () => void;
 }
 
 const CategoryDetailModal = ({
   visible,
   category,
   onClose,
-  onEditLimit
+  onEditLimit,
+  onDeleteCategory
 }: CategoryDetailModalProps) => {
   if (!category) {
     return null;
   }
+
+  const canDeleteCategory = !category.is_default;
 
   return (
     <Modal
@@ -694,93 +817,178 @@ const CategoryDetailModal = ({
       onRequestClose={onClose}
     >
       <View style={styles.modalOverlay}>
-        <View style={styles.modalContent}>
-          <View style={styles.detailHeader}>
-            <View
-              style={[
-                styles.iconContainer,
-                { backgroundColor: `${category.color}18` }
-              ]}
-            >
-              <MaterialCommunityIcons
-                name={category.icon as keyof typeof MaterialCommunityIcons.glyphMap}
-                size={26}
-                color={category.color}
-              />
+        <View style={[styles.modalContent, styles.detailModalContent]}>
+          <ScrollView
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.detailScrollContent}
+          >
+            <View style={styles.detailHeader}>
+              <View
+                style={[
+                  styles.iconContainer,
+                  { backgroundColor: `${category.color}18` }
+                ]}
+              >
+                <MaterialCommunityIcons
+                  name={category.icon as keyof typeof MaterialCommunityIcons.glyphMap}
+                  size={26}
+                  color={category.color}
+                />
+              </View>
+
+              <View style={styles.detailTitleContainer}>
+                <Text style={styles.modalTitle}>
+                  {category.name}
+                </Text>
+
+                <Text style={styles.modalSubtitle}>
+                  Acompanhamento da categoria
+                </Text>
+              </View>
+
+              {canDeleteCategory && (
+                <TouchableOpacity
+                  style={styles.deleteIconButton}
+                  onPress={onDeleteCategory}
+                >
+                  <MaterialCommunityIcons
+                    name="trash-can-outline"
+                    size={21}
+                    color="#A93226"
+                  />
+                </TouchableOpacity>
+              )}
             </View>
 
-            <View style={styles.detailTitleContainer}>
-              <Text style={styles.modalTitle}>
-                {category.name}
+            <View style={styles.detailInfoBox}>
+              <Text style={styles.detailLabel}>
+                Total no mês atual
               </Text>
 
-              <Text style={styles.modalSubtitle}>
-                Análise da categoria
+              <Text style={styles.detailValue}>
+                {formatCurrency(category.spent)}
               </Text>
             </View>
-          </View>
 
-          <View style={styles.detailInfoBox}>
-            <Text style={styles.detailLabel}>
-              Total registrado
-            </Text>
-
-            <Text style={styles.detailValue}>
-              {formatCurrency(category.spent)}
-            </Text>
-          </View>
-
-          <View style={styles.detailInfoBox}>
-            <Text style={styles.detailLabel}>
-              Limite definido
-            </Text>
-
-            <Text style={styles.detailValue}>
-              {formatCurrency(category.monthly_limit)}
-            </Text>
-          </View>
-
-          <View style={styles.detailInfoBox}>
-            <Text style={styles.detailLabel}>
-              Lançamentos vinculados
-            </Text>
-
-            <Text style={styles.detailValue}>
-              {category.monthlyTransactions.length}
-            </Text>
-          </View>
-
-          <View style={styles.insightBox}>
-            <MaterialCommunityIcons
-              name="lightbulb-on-outline"
-              size={22}
-              color="#F39C12"
-            />
-
-            <Text style={styles.insightText}>
-              {category.insight}
-            </Text>
-          </View>
-
-          <View style={styles.detailActions}>
-            <TouchableOpacity
-              style={styles.editLimitButton}
-              onPress={onEditLimit}
-            >
-              <Text style={styles.editLimitButtonText}>
-                Editar limite
+            <View style={styles.detailInfoBox}>
+              <Text style={styles.detailLabel}>
+                Limite definido
               </Text>
-            </TouchableOpacity>
 
-            <TouchableOpacity
-              style={styles.closeButton}
-              onPress={onClose}
-            >
-              <Text style={styles.closeButtonText}>
-                Fechar
+              <Text style={styles.detailValue}>
+                {formatCurrency(category.monthly_limit)}
               </Text>
-            </TouchableOpacity>
-          </View>
+            </View>
+
+            <View style={styles.detailInfoBox}>
+              <Text style={styles.detailLabel}>
+                Lançamentos no mês atual
+              </Text>
+
+              <Text style={styles.detailValue}>
+                {category.monthlyTransactions.length}
+              </Text>
+            </View>
+
+            <View style={styles.educationBox}>
+              <View style={styles.educationHeader}>
+                <View style={styles.educationIconContainer}>
+                  <MaterialCommunityIcons
+                    name={
+                      category.educationInsight.behavior === 'economia'
+                        ? 'piggy-bank-outline'
+                        : category.educationInsight.behavior === 'excesso'
+                          ? 'alert-circle-outline'
+                          : category.educationInsight.behavior === 'equilibrado'
+                            ? 'scale-balance'
+                            : 'target'
+                    }
+                    size={22}
+                    color={
+                      category.educationInsight.behavior === 'excesso'
+                        ? '#E67E22'
+                        : '#1B365D'
+                    }
+                  />
+                </View>
+
+                <View style={styles.educationTitleContainer}>
+                  <Text style={styles.educationTitle}>
+                    {category.educationInsight.title}
+                  </Text>
+
+                  <Text style={styles.educationSubtitle}>
+                    Educação financeira
+                  </Text>
+                </View>
+              </View>
+
+              <Text style={styles.educationMessage}>
+                {category.educationInsight.message}
+              </Text>
+
+              {category.educationInsight.behavior !== 'sem_limite' &&
+                category.educationInsight.behavior !== 'equilibrado' && (
+                  <View style={styles.projectionContainer}>
+                    <View style={styles.projectionItem}>
+                      <Text style={styles.projectionLabel}>
+                        6 meses
+                      </Text>
+
+                      <Text style={styles.projectionValue}>
+                        {formatCurrency(
+                          category.educationInsight.projection.sixMonths
+                        )}
+                      </Text>
+                    </View>
+
+                    <View style={styles.projectionItem}>
+                      <Text style={styles.projectionLabel}>
+                        1 ano
+                      </Text>
+
+                      <Text style={styles.projectionValue}>
+                        {formatCurrency(
+                          category.educationInsight.projection.twelveMonths
+                        )}
+                      </Text>
+                    </View>
+
+                    <View style={styles.projectionItem}>
+                      <Text style={styles.projectionLabel}>
+                        2 anos
+                      </Text>
+
+                      <Text style={styles.projectionValue}>
+                        {formatCurrency(
+                          category.educationInsight.projection.twentyFourMonths
+                        )}
+                      </Text>
+                    </View>
+                  </View>
+                )}
+            </View>
+
+            <View style={styles.detailActions}>
+              <TouchableOpacity
+                style={styles.editLimitButton}
+                onPress={onEditLimit}
+              >
+                <Text style={styles.editLimitButtonText}>
+                  Editar limite
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.closeButton}
+                onPress={onClose}
+              >
+                <Text style={styles.closeButtonText}>
+                  Fechar
+                </Text>
+              </TouchableOpacity>
+            </View>
+          </ScrollView>
         </View>
       </View>
     </Modal>
@@ -856,6 +1064,120 @@ const EditLimitModal = ({
               </Text>
             </TouchableOpacity>
           </View>
+        </View>
+      </View>
+    </Modal>
+  );
+};
+
+interface CategoryOptionsModalProps {
+  visible: boolean;
+  category: AnalyzedCategory | null;
+  onClose: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}
+
+const CategoryOptionsModal = ({
+  visible,
+  category,
+  onClose,
+  onEdit,
+  onDelete
+}: CategoryOptionsModalProps) => {
+  if (!category) {
+    return null;
+  }
+
+  const canDeleteCategory = !category.is_default;
+
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+    >
+      <View style={styles.optionsOverlay}>
+        <View style={styles.optionsContent}>
+          <View style={styles.optionsHandle} />
+
+          <Text style={styles.optionsTitle}>
+            {category.name}
+          </Text>
+
+          <Text style={styles.optionsSubtitle}>
+            Escolha uma ação para esta categoria.
+          </Text>
+
+          <TouchableOpacity
+            style={styles.optionButton}
+            onPress={onEdit}
+          >
+            <View style={styles.optionIconBox}>
+              <MaterialCommunityIcons
+                name="pencil-outline"
+                size={21}
+                color="#1B365D"
+              />
+            </View>
+
+            <View style={styles.optionTextBox}>
+              <Text style={styles.optionTitle}>
+                Editar limite
+              </Text>
+
+              <Text style={styles.optionDescription}>
+                Ajustar o valor planejado para esta categoria.
+              </Text>
+            </View>
+          </TouchableOpacity>
+
+          {canDeleteCategory ? (
+            <TouchableOpacity
+              style={styles.optionButtonDanger}
+              onPress={onDelete}
+            >
+              <View style={styles.optionIconBoxDanger}>
+                <MaterialCommunityIcons
+                  name="trash-can-outline"
+                  size={21}
+                  color="#A93226"
+                />
+              </View>
+
+              <View style={styles.optionTextBox}>
+                <Text style={styles.optionTitleDanger}>
+                  Excluir categoria
+                </Text>
+
+                <Text style={styles.optionDescription}>
+                  Remover esta categoria sem apagar os lançamentos antigos.
+                </Text>
+              </View>
+            </TouchableOpacity>
+          ) : (
+            <View style={styles.optionLockedBox}>
+              <MaterialCommunityIcons
+                name="lock-outline"
+                size={19}
+                color="#7F8C8D"
+              />
+
+              <Text style={styles.optionLockedText}>
+                Categoria padrão do FinanceIQ. Ela pode ser editada, mas não excluída.
+              </Text>
+            </View>
+          )}
+
+          <TouchableOpacity
+            style={styles.optionsCancelButton}
+            onPress={onClose}
+          >
+            <Text style={styles.optionsCancelText}>
+              Cancelar
+            </Text>
+          </TouchableOpacity>
         </View>
       </View>
     </Modal>
@@ -1248,6 +1570,14 @@ const styles = StyleSheet.create({
     padding: 22
   },
 
+  detailModalContent: {
+    maxHeight: '90%'
+  },
+
+  detailScrollContent: {
+    paddingBottom: 4
+  },
+
   modalTitle: {
     color: '#1B365D',
     fontSize: 20,
@@ -1321,6 +1651,16 @@ const styles = StyleSheet.create({
     flex: 1
   },
 
+  deleteIconButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 14,
+    backgroundColor: '#FDEDEC',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 10
+  },
+
   detailInfoBox: {
     backgroundColor: '#F4F6F8',
     borderRadius: 14,
@@ -1338,24 +1678,6 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
     marginTop: 3
-  },
-
-  insightBox: {
-    backgroundColor: '#FFF8E7',
-    borderRadius: 14,
-    padding: 14,
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-    marginTop: 4,
-    marginBottom: 16
-  },
-
-  insightText: {
-    flex: 1,
-    color: '#7D6608',
-    fontSize: 13,
-    lineHeight: 18
   },
 
   detailActions: {
@@ -1386,6 +1708,210 @@ const styles = StyleSheet.create({
 
   closeButtonText: {
     color: '#FFF',
+    fontWeight: 'bold'
+  },
+
+  educationBox: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 16,
+    padding: 14,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#EAF0F6'
+  },
+
+  educationHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10
+  },
+
+  educationIconContainer: {
+    width: 40,
+    height: 40,
+    borderRadius: 14,
+    backgroundColor: '#EAF0F6',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10
+  },
+
+  educationTitleContainer: {
+    flex: 1
+  },
+
+  educationTitle: {
+    color: '#1B365D',
+    fontSize: 15,
+    fontWeight: 'bold'
+  },
+
+  educationSubtitle: {
+    color: '#7F8C8D',
+    fontSize: 11,
+    marginTop: 2
+  },
+
+  educationMessage: {
+    color: '#34495E',
+    fontSize: 12,
+    lineHeight: 18
+  },
+
+  projectionContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 14
+  },
+
+  projectionItem: {
+    width: '31%',
+    backgroundColor: '#FFF',
+    borderRadius: 12,
+    padding: 9,
+    alignItems: 'center'
+  },
+
+  projectionLabel: {
+    color: '#7F8C8D',
+    fontSize: 10,
+    marginBottom: 4
+  },
+
+  projectionValue: {
+    color: '#1B365D',
+    fontSize: 11,
+    fontWeight: 'bold',
+    textAlign: 'center'
+  },
+
+  optionsOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+    justifyContent: 'flex-end'
+  },
+
+  optionsContent: {
+    backgroundColor: '#FFF',
+    borderTopLeftRadius: 26,
+    borderTopRightRadius: 26,
+    padding: 22
+  },
+
+  optionsHandle: {
+    width: 42,
+    height: 5,
+    borderRadius: 10,
+    backgroundColor: '#DDE3EA',
+    alignSelf: 'center',
+    marginBottom: 18
+  },
+
+  optionsTitle: {
+    color: '#1B365D',
+    fontSize: 20,
+    fontWeight: 'bold'
+  },
+
+  optionsSubtitle: {
+    color: '#7F8C8D',
+    fontSize: 13,
+    marginTop: 4,
+    marginBottom: 16
+  },
+
+  optionButton: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#EAF0F6',
+    borderRadius: 16,
+    padding: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10
+  },
+
+  optionButtonDanger: {
+    backgroundColor: '#FDEDEC',
+    borderWidth: 1,
+    borderColor: '#F5B7B1',
+    borderRadius: 16,
+    padding: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10
+  },
+
+  optionIconBox: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: '#EAF0F6',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12
+  },
+
+  optionIconBoxDanger: {
+    width: 42,
+    height: 42,
+    borderRadius: 14,
+    backgroundColor: '#FADBD8',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12
+  },
+
+  optionTextBox: {
+    flex: 1
+  },
+
+  optionTitle: {
+    color: '#1B365D',
+    fontSize: 14,
+    fontWeight: 'bold'
+  },
+
+  optionTitleDanger: {
+    color: '#A93226',
+    fontSize: 14,
+    fontWeight: 'bold'
+  },
+
+  optionDescription: {
+    color: '#7F8C8D',
+    fontSize: 12,
+    marginTop: 3,
+    lineHeight: 16
+  },
+
+  optionLockedBox: {
+    backgroundColor: '#F4F6F8',
+    borderRadius: 14,
+    padding: 12,
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+    marginBottom: 10
+  },
+
+  optionLockedText: {
+    flex: 1,
+    color: '#7F8C8D',
+    fontSize: 12,
+    lineHeight: 16
+  },
+
+  optionsCancelButton: {
+    backgroundColor: '#EAECEE',
+    padding: 14,
+    borderRadius: 14,
+    alignItems: 'center',
+    marginTop: 4
+  },
+
+  optionsCancelText: {
+    color: '#1B365D',
     fontWeight: 'bold'
   }
 });

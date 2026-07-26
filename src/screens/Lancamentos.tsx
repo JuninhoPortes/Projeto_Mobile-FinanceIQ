@@ -64,6 +64,9 @@ export default function Lancamentos() {
   const [editingTransaction, setEditingTransaction] =
     useState<Transaction | null>(null);
 
+  const [editMode, setEditMode] =
+  useState<'replace' | 'add'>('replace');
+
   const user = auth.currentUser;
 
   // =========================
@@ -172,12 +175,35 @@ export default function Lancamentos() {
       return false;
     }
 
+    if (transaction.is_fixed) {
+      return true;
+    }
+
     return [
       'Salário Mensal',
       'Moradia',
       'Transporte',
       'Alimentação'
     ].includes(transaction.description);
+  };
+
+  const handleChangeEditMode = (
+    mode: 'replace' | 'add'
+  ) => {
+    setEditMode(mode);
+
+    if (!editingTransaction) {
+      return;
+    }
+
+    if (mode === 'add') {
+      setAmount('');
+      return;
+    }
+
+    setAmount(
+      floatToMoney(editingTransaction.amount)
+    );
   };
   
   const handleSelectCategory = (categoryName: string) => {
@@ -290,30 +316,39 @@ export default function Lancamentos() {
   // =========================
   // ABRIR MODAL PARA EDITAR
   // =========================
-  const handleEdit = (
-    transaction: Transaction
-  ) => {
+    const handleEdit = (
+      transaction: Transaction
+    ) => {
+      const fixedTransaction =
+        isFixedTransaction(transaction);
 
-    setEditingTransaction(transaction);
+      setEditingTransaction(transaction);
 
-    setDescription(
-      transaction.description
-    );
+      setDescription(
+        transaction.description
+      );
 
-    setAmount(
-      floatToMoney(transaction.amount)
-    );
+      setType(transaction.type);
 
-    setType(transaction.type);
+      setSelectedCategoryName(
+        transaction.category
+      );
 
-    setSelectedCategoryName(
-      transaction.category
-    );
+      setCategorySuggestion(null);
 
-    setCategorySuggestion(null);
+      if (fixedTransaction) {
+        setEditMode('add');
+        setAmount('');
+      } else {
+        setEditMode('replace');
 
-    setModalVisible(true);
-  };
+        setAmount(
+          floatToMoney(transaction.amount)
+        );
+      }
+
+      setModalVisible(true);
+    };
 
   // =========================
   // EXCLUIR
@@ -360,51 +395,82 @@ export default function Lancamentos() {
   // =========================
   // SALVAR
   // =========================
-  const handleSave = async () => {
+const handleSave = async () => {
+  if (!amount) {
+    Alert.alert(
+      'Erro',
+      'Preencha o valor.'
+    );
 
-    if (!amount) {
+    return;
+  }
 
+  if (!editingTransaction && !description.trim()) {
+    Alert.alert(
+      'Erro',
+      'Preencha a descrição.'
+    );
+
+    return;
+  }
+
+  if (!user?.uid) {
+    Alert.alert(
+      'Erro',
+      'Usuário não autenticado.'
+    );
+
+    return;
+  }
+
+  try {
+    const parsedAmount = moneyToFloat(amount);
+
+    if (isNaN(parsedAmount) || parsedAmount <= 0) {
       Alert.alert(
         'Erro',
-        'Preencha o valor.'
+        'Insira um valor válido maior que zero.'
       );
 
       return;
     }
 
-    if (!editingTransaction && !description.trim()) {
+    if (
+      editingTransaction &&
+      editingTransaction.id
+    ) {
+      const fixedTransaction =
+        isFixedTransaction(editingTransaction);
 
-      Alert.alert(
-        'Erro',
-        'Preencha a descrição.'
-      );
+      if (fixedTransaction) {
+        const amountToSave =
+          editMode === 'add'
+            ? Number(editingTransaction.amount || 0) + parsedAmount
+            : parsedAmount;
 
-      return;
-    }
-
-    if (!user?.uid) {
-
-      Alert.alert(
-        'Erro',
-        'Usuário não autenticado.'
-      );
-
-      return;
-    }
-
-    try {
-
-      const parsedAmount = moneyToFloat(amount);
-
-      if (isNaN(parsedAmount) || parsedAmount <= 0) {
-        Alert.alert(
-          'Erro',
-          'Insira um valor válido maior que zero.'
+        await transactionService.updateAmount(
+          editingTransaction.id,
+          amountToSave
         );
+      } else {
+        if (!selectedCategoryName) {
+          Alert.alert(
+            'Categoria obrigatória',
+            'Selecione uma categoria antes de salvar o lançamento.'
+          );
 
-        return;
+          return;
+        }
+
+        await transactionService.update(
+          editingTransaction.id,
+          {
+            amount: parsedAmount,
+            category: selectedCategoryName
+          }
+        );
       }
-
+    } else {
       if (!selectedCategoryName) {
         Alert.alert(
           'Categoria obrigatória',
@@ -414,85 +480,48 @@ export default function Lancamentos() {
         return;
       }
 
-      const categoryToSave = selectedCategoryName;
-
-      // =========================
-      // EDITAR
-      // =========================
-      if (
-        editingTransaction &&
-        editingTransaction.id
-      ) {
-
-        const updateData: Partial<Pick<Transaction, 'amount' | 'category'>> = {
-          amount: parsedAmount
-        };
-
-        if (!isFixedTransaction(editingTransaction)) {
-          if (!selectedCategoryName) {
-            Alert.alert(
-              'Categoria obrigatória',
-              'Selecione uma categoria antes de salvar o lançamento.'
-            );
-
-            return;
-          }
-
-          updateData.category = selectedCategoryName;
+      await transactionService.add(
+        user.uid,
+        {
+          description: description.trim(),
+          amount: parsedAmount,
+          type,
+          category: selectedCategoryName
         }
-
-        await transactionService.update(
-          editingTransaction.id,
-          updateData
-        );
-
-      } else {
-
-        // =========================
-        // NOVO LANÇAMENTO
-        // =========================
-        await transactionService.add(
-          user.uid,
-          {
-            description: description.trim(),
-            amount: parsedAmount,
-            type,
-            category: categoryToSave
-          }
-        );
-      }
-
-      setDescription('');
-
-      setAmount('');
-
-      setType('outcome');
-
-      setSelectedCategoryName('');
-
-      setCategorySuggestion(null);
-
-      setEditingTransaction(null);
-
-      setModalVisible(false);
-
-      loadData();
-
-      Alert.alert(
-        'Sucesso',
-        'Lançamento salvo com sucesso!'
-      );
-
-    } catch (error) {
-
-      console.error(error);
-
-      Alert.alert(
-        'Erro',
-        'Não foi possível salvar.'
       );
     }
-  };
+
+    setDescription('');
+
+    setAmount('');
+
+    setType('outcome');
+
+    setSelectedCategoryName('');
+
+    setCategorySuggestion(null);
+
+    setEditingTransaction(null);
+
+    setEditMode('replace');
+
+    setModalVisible(false);
+
+    loadData();
+
+    Alert.alert(
+      'Sucesso',
+      'Lançamento salvo com sucesso!'
+    );
+  } catch (error) {
+    console.error(error);
+
+    Alert.alert(
+      'Erro',
+      'Não foi possível salvar.'
+    );
+  }
+};
 
   // =========================
   // FECHAR MODAL
@@ -512,6 +541,8 @@ export default function Lancamentos() {
     setSelectedCategoryName('');
 
     setCategorySuggestion(null);
+
+    setEditMode('replace');
   };
 
   // =========================
@@ -614,6 +645,8 @@ export default function Lancamentos() {
             setSelectedCategoryName('');
 
             setCategorySuggestion(null);
+
+            setEditMode('replace');
 
             setModalVisible(true);
           }}
@@ -835,20 +868,115 @@ export default function Lancamentos() {
                 )}
 
                 {/* VALOR */}
-                <Text style={styles.inputLabel}>
-                  Valor (R$)
-                </Text>
+{editingTransaction &&
+  isFixedTransaction(editingTransaction) && (
 
-                <TextInput
-                  style={styles.input}
-                  placeholder="0,00"
-                  keyboardType="numeric"
-                  value={amount}
-                  onChangeText={(text) => {
-                    const formatted = formatMoney(text);
-                    setAmount(formatted);
-                  }}
-                />
+    <View style={styles.currentAmountBox}>
+      <Text style={styles.currentAmountLabel}>
+        Valor atual
+      </Text>
+
+      <Text style={styles.currentAmountValue}>
+        R$ {editingTransaction.amount
+          .toFixed(2)
+          .replace('.', ',')}
+      </Text>
+    </View>
+  )}
+
+{editingTransaction &&
+  isFixedTransaction(editingTransaction) && (
+
+    <View style={styles.editModeContainer}>
+      <Text style={styles.inputLabel}>
+        Como deseja salvar?
+      </Text>
+
+      <View style={styles.editModeButtons}>
+        <TouchableOpacity
+          style={[
+            styles.editModeButton,
+            editMode === 'add' &&
+            styles.editModeButtonActive
+          ]}
+          onPress={() =>
+            handleChangeEditMode('add')
+          }
+        >
+          <MaterialCommunityIcons
+            name="plus-circle-outline"
+            size={18}
+            color={
+              editMode === 'add'
+                ? '#FFF'
+                : '#1B365D'
+            }
+          />
+
+          <Text
+            style={[
+              styles.editModeButtonText,
+              editMode === 'add' &&
+              styles.editModeButtonTextActive
+            ]}
+          >
+            Adicionar
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[
+            styles.editModeButton,
+            editMode === 'replace' &&
+            styles.editModeButtonActive
+          ]}
+          onPress={() =>
+            handleChangeEditMode('replace')
+          }
+        >
+          <MaterialCommunityIcons
+            name="pencil-outline"
+            size={18}
+            color={
+              editMode === 'replace'
+                ? '#FFF'
+                : '#1B365D'
+            }
+          />
+
+          <Text
+            style={[
+              styles.editModeButtonText,
+              editMode === 'replace' &&
+              styles.editModeButtonTextActive
+            ]}
+          >
+            Substituir
+          </Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  )}
+
+<Text style={styles.inputLabel}>
+  {editingTransaction &&
+    isFixedTransaction(editingTransaction)
+      ? editMode === 'add'
+        ? 'Valor a adicionar (R$)'
+        : 'Novo valor total (R$)'
+      : 'Valor (R$)'}
+</Text>
+
+<TextInput
+  style={styles.input}
+  placeholder="0,00"
+  keyboardType="numeric"
+  value={amount}
+  onChangeText={(text) => {
+    const formatted = formatMoney(text);
+    setAmount(formatted);
+  }}
+/>
 
                 {/* DESCRIÇÃO */}
                 {!editingTransaction && (
@@ -1283,6 +1411,61 @@ const styles = StyleSheet.create({
   saveButtonText: {
     color: '#FFF',
     fontWeight: 'bold'
-  }
+  },
+
+  currentAmountBox: {
+  backgroundColor: '#F4F6F8',
+  borderRadius: 14,
+  padding: 14,
+  marginBottom: 16
+},
+
+currentAmountLabel: {
+  color: '#7F8C8D',
+  fontSize: 13,
+  marginBottom: 4
+},
+
+currentAmountValue: {
+  color: '#1B365D',
+  fontSize: 20,
+  fontWeight: 'bold'
+},
+
+editModeContainer: {
+  marginBottom: 16
+},
+
+editModeButtons: {
+  flexDirection: 'row',
+  gap: 10
+},
+
+editModeButton: {
+  flex: 1,
+  backgroundColor: '#F4F6F8',
+  borderWidth: 1,
+  borderColor: '#DDE3EA',
+  borderRadius: 14,
+  paddingVertical: 12,
+  alignItems: 'center',
+  justifyContent: 'center',
+  flexDirection: 'row'
+},
+
+editModeButtonActive: {
+  backgroundColor: '#1B365D',
+  borderColor: '#1B365D'
+},
+
+editModeButtonText: {
+  color: '#1B365D',
+  fontWeight: 'bold',
+  marginLeft: 6
+},
+
+editModeButtonTextActive: {
+  color: '#FFF'
+}
 
 });
