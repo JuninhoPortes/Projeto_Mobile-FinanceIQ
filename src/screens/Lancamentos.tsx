@@ -24,7 +24,16 @@ import {
   Transaction
 } from '../database/transactionService';
 
-// ✅ AUTH CENTRALIZADO
+import {
+  categoryService,
+  Category
+} from '../database/categoryService';
+
+import {
+  categorySuggestionService,
+  CategorySuggestion
+} from '../services/categorySuggestionService';
+
 import { auth } from '../../firebaseConfig';
 
 export default function Lancamentos() {
@@ -43,9 +52,20 @@ export default function Lancamentos() {
   const [type, setType] =
     useState<'income' | 'outcome'>('outcome');
 
-  // ✅ MODO EDIÇÃO
+  const [availableCategories, setAvailableCategories] =
+    useState<Category[]>([]);
+
+  const [selectedCategoryName, setSelectedCategoryName] =
+    useState('');
+
+  const [categorySuggestion, setCategorySuggestion] =
+    useState<CategorySuggestion | null>(null);
+
   const [editingTransaction, setEditingTransaction] =
     useState<Transaction | null>(null);
+
+  const [editMode, setEditMode] =
+  useState<'replace' | 'add'>('replace');
 
   const user = auth.currentUser;
 
@@ -53,37 +73,148 @@ export default function Lancamentos() {
   // FUNÇÃO DE MÁSCARA MONETÁRIA
   // =========================
   const formatMoney = (text: string) => {
-    // Remove tudo o que não for número
     const cleanText = text.replace(/\D/g, '');
-    
+
     if (!cleanText) {
       return '';
     }
 
-    // Transforma a string de números para float considerando os centavos
     const valueFloat = parseFloat(cleanText) / 100;
 
-    // Retorna formatado no padrão PT-BR (1.250,50)
     return valueFloat.toLocaleString('pt-BR', {
       minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
+      maximumFractionDigits: 2
     });
   };
 
-  // Funções Auxiliares para Conversão no Banco
   const moneyToFloat = (valueStr: string): number => {
     if (!valueStr) return 0;
-    // Remove os pontos de milhar e troca a vírgula decimal por ponto
-    const cleanStr = valueStr.replace(/\./g, '').replace(',', '.');
+
+    const cleanStr = valueStr
+      .replace(/\./g, '')
+      .replace(',', '.');
+
     return parseFloat(cleanStr);
   };
 
   const floatToMoney = (valueNum: number): string => {
     return valueNum.toLocaleString('pt-BR', {
       minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
+      maximumFractionDigits: 2
     });
   };
+
+  // =========================
+  // AUXILIARES DE CATEGORIA
+  // =========================
+  const normalizeText = (value: string) => {
+    return value
+      .trim()
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '');
+  };
+
+  const getDefaultCategoryForType = (
+    selectedType: 'income' | 'outcome',
+    categories: Category[]
+  ) => {
+    if (selectedType === 'income') {
+      return (
+        categories.find(
+          category =>
+            category.type === 'income' &&
+            normalizeText(category.name) === 'receita'
+        )?.name || 'Receita'
+      );
+    }
+
+    return (
+      categories.find(
+        category =>
+          category.type === 'outcome' &&
+          normalizeText(category.name) === 'outros'
+      )?.name ||
+      categories.find(
+        category => category.type === 'outcome'
+      )?.name ||
+      'Outros'
+    );
+  };
+
+  const getCategoriesByType = () => {
+    return availableCategories.filter(
+      category =>
+        category.is_active &&
+        category.type === type
+    );
+  };
+
+  const handleChangeType = (
+    selectedType: 'income' | 'outcome'
+  ) => {
+    setType(selectedType);
+
+    setSelectedCategoryName('');
+
+    setCategorySuggestion(null);
+  };
+
+  const applySuggestedCategory = () => {
+    if (categorySuggestion?.category) {
+      setSelectedCategoryName(
+        categorySuggestion.category.name
+      );
+    }
+  };
+
+  const isFixedTransaction = (
+    transaction?: Transaction | null
+  ) => {
+    if (!transaction) {
+      return false;
+    }
+
+    if (transaction.is_fixed) {
+      return true;
+    }
+
+    return [
+      'Salário Mensal',
+      'Moradia',
+      'Transporte',
+      'Alimentação'
+    ].includes(transaction.description);
+  };
+
+  const handleChangeEditMode = (
+    mode: 'replace' | 'add'
+  ) => {
+    setEditMode(mode);
+
+    if (!editingTransaction) {
+      return;
+    }
+
+    if (mode === 'add') {
+      setAmount('');
+      return;
+    }
+
+    setAmount(
+      floatToMoney(editingTransaction.amount)
+    );
+  };
+  
+  const handleSelectCategory = (categoryName: string) => {
+  setSelectedCategoryName((currentCategory) => {
+    if (currentCategory === categoryName) {
+      return '';
+    }
+
+    return categoryName;
+  });
+};
 
   // =========================
   // CARREGAR DADOS
@@ -94,12 +225,15 @@ export default function Lancamentos() {
 
     try {
 
-      const data =
-        await transactionService.listAll(
-          user.uid
-        );
+      const [data, categories] =
+        await Promise.all([
+          transactionService.listAll(user.uid),
+          categoryService.listAll(user.uid)
+        ]);
 
       setTransactions(data);
+
+      setAvailableCategories(categories);
 
     } catch (error) {
 
@@ -112,7 +246,7 @@ export default function Lancamentos() {
   };
 
   // =========================
-  // EFFECT
+  // EFFECT: CARREGAR DADOS
   // =========================
   useEffect(() => {
 
@@ -121,13 +255,44 @@ export default function Lancamentos() {
   }, []);
 
   // =========================
+  // EFFECT: SUGESTÃO DE CATEGORIA
+  // =========================
+  useEffect(() => {
+    if (editingTransaction) {
+      return;
+    }
+
+    const suggestion =
+      categorySuggestionService.suggestCategory({
+        description,
+        type,
+        categories: availableCategories
+      });
+
+    setCategorySuggestion(suggestion);
+
+    if (
+      suggestion?.category &&
+      suggestion.shouldAutoSelect
+    ) {
+      setSelectedCategoryName(
+        suggestion.category.name
+      );
+    }
+  }, [
+    description,
+    type,
+    availableCategories,
+    editingTransaction
+  ]);
+
+  // =========================
   // BOTÃO VOLTAR ANDROID
   // =========================
   useEffect(() => {
 
     const backAction = () => {
 
-      // ✅ FECHA O MODAL
       if (modalVisible) {
 
         closeModal();
@@ -135,7 +300,6 @@ export default function Lancamentos() {
         return true;
       }
 
-      // ❌ LIBERA O RESTO DA NAVEGAÇÃO
       return false;
     };
 
@@ -147,30 +311,44 @@ export default function Lancamentos() {
 
     return () => backHandler.remove();
 
-  }, [modalVisible]);
+  }, [modalVisible, availableCategories]);
 
   // =========================
   // ABRIR MODAL PARA EDITAR
   // =========================
-  const handleEdit = (
-    transaction: Transaction
-  ) => {
+    const handleEdit = (
+      transaction: Transaction
+    ) => {
+      const fixedTransaction =
+        isFixedTransaction(transaction);
 
-    setEditingTransaction(transaction);
+      setEditingTransaction(transaction);
 
-    setDescription(
-      transaction.description
-    );
+      setDescription(
+        transaction.description
+      );
 
-    // Carrega o valor já formatado com a máscara na edição
-    setAmount(
-      floatToMoney(transaction.amount)
-    );
+      setType(transaction.type);
 
-    setType(transaction.type);
+      setSelectedCategoryName(
+        transaction.category
+      );
 
-    setModalVisible(true);
-  };
+      setCategorySuggestion(null);
+
+      if (fixedTransaction) {
+        setEditMode('add');
+        setAmount('');
+      } else {
+        setEditMode('replace');
+
+        setAmount(
+          floatToMoney(transaction.amount)
+        );
+      }
+
+      setModalVisible(true);
+    };
 
   // =========================
   // EXCLUIR
@@ -217,100 +395,133 @@ export default function Lancamentos() {
   // =========================
   // SALVAR
   // =========================
-  const handleSave = async () => {
+const handleSave = async () => {
+  if (!amount) {
+    Alert.alert(
+      'Erro',
+      'Preencha o valor.'
+    );
 
-    if (!description || !amount) {
+    return;
+  }
 
+  if (!editingTransaction && !description.trim()) {
+    Alert.alert(
+      'Erro',
+      'Preencha a descrição.'
+    );
+
+    return;
+  }
+
+  if (!user?.uid) {
+    Alert.alert(
+      'Erro',
+      'Usuário não autenticado.'
+    );
+
+    return;
+  }
+
+  try {
+    const parsedAmount = moneyToFloat(amount);
+
+    if (isNaN(parsedAmount) || parsedAmount <= 0) {
       Alert.alert(
         'Erro',
-        'Preencha todos os campos.'
+        'Insira um valor válido maior que zero.'
       );
 
       return;
     }
 
-    if (!user?.uid) {
+    if (
+      editingTransaction &&
+      editingTransaction.id
+    ) {
+      const fixedTransaction =
+        isFixedTransaction(editingTransaction);
 
-      Alert.alert(
-        'Erro',
-        'Usuário não autenticado.'
-      );
-
-      return;
-    }
-
-    try {
-
-      // Transforma o texto mascarado de volta em um número flutuante válido (Ex: "1.500,30" -> 1500.3)
-      const parsedAmount = moneyToFloat(amount);
-
-      if (isNaN(parsedAmount) || parsedAmount <= 0) {
-        Alert.alert('Erro', 'Insira um valor válido maior que zero.');
-        return;
-      }
-
-      // =========================
-      // EDITAR
-      // =========================
-      if (
-        editingTransaction &&
-        editingTransaction.id
-      ) {
+      if (fixedTransaction) {
+        const amountToSave =
+          editMode === 'add'
+            ? Number(editingTransaction.amount || 0) + parsedAmount
+            : parsedAmount;
 
         await transactionService.updateAmount(
           editingTransaction.id,
-          parsedAmount
+          amountToSave
         );
-
       } else {
+        if (!selectedCategoryName) {
+          Alert.alert(
+            'Categoria obrigatória',
+            'Selecione uma categoria antes de salvar o lançamento.'
+          );
 
-        // =========================
-        // NOVO LANÇAMENTO
-        // =========================
-        await transactionService.add(
-          user.uid,
+          return;
+        }
+
+        await transactionService.update(
+          editingTransaction.id,
           {
-            description,
             amount: parsedAmount,
-            type,
-            category:
-              type === 'income'
-                ? 'Receita'
-                : 'Geral'
+            category: selectedCategoryName
           }
         );
       }
+    } else {
+      if (!selectedCategoryName) {
+        Alert.alert(
+          'Categoria obrigatória',
+          'Selecione uma categoria antes de salvar o lançamento.'
+        );
 
-      // =========================
-      // RESET
-      // =========================
-      setDescription('');
+        return;
+      }
 
-      setAmount('');
-
-      setType('outcome');
-
-      setEditingTransaction(null);
-
-      setModalVisible(false);
-
-      loadData();
-
-      Alert.alert(
-        'Sucesso',
-        'Lançamento salvo com sucesso!'
-      );
-
-    } catch (error) {
-
-      console.error(error);
-
-      Alert.alert(
-        'Erro',
-        'Não foi possível salvar.'
+      await transactionService.add(
+        user.uid,
+        {
+          description: description.trim(),
+          amount: parsedAmount,
+          type,
+          category: selectedCategoryName
+        }
       );
     }
-  };
+
+    setDescription('');
+
+    setAmount('');
+
+    setType('outcome');
+
+    setSelectedCategoryName('');
+
+    setCategorySuggestion(null);
+
+    setEditingTransaction(null);
+
+    setEditMode('replace');
+
+    setModalVisible(false);
+
+    loadData();
+
+    Alert.alert(
+      'Sucesso',
+      'Lançamento salvo com sucesso!'
+    );
+  } catch (error) {
+    console.error(error);
+
+    Alert.alert(
+      'Erro',
+      'Não foi possível salvar.'
+    );
+  }
+};
 
   // =========================
   // FECHAR MODAL
@@ -326,6 +537,12 @@ export default function Lancamentos() {
     setAmount('');
 
     setType('outcome');
+
+    setSelectedCategoryName('');
+
+    setCategorySuggestion(null);
+
+    setEditMode('replace');
   };
 
   // =========================
@@ -338,30 +555,63 @@ export default function Lancamentos() {
     if (item.type === 'income')
       return 'briefcase-outline';
 
+    const category =
+      normalizeText(item.category || '');
+
     const desc =
-      item.description.toLowerCase();
+      normalizeText(item.description || '');
 
     if (
+      category.includes('moradia') ||
       desc.includes('moradia')
     )
       return 'home-outline';
 
     if (
-      desc.includes('transporte')
+      category.includes('transporte') ||
+      desc.includes('transporte') ||
+      desc.includes('uber') ||
+      desc.includes('gasolina')
     )
       return 'car-outline';
 
     if (
-      desc.includes('alimentação')
+      category.includes('alimentacao') ||
+      desc.includes('ifood') ||
+      desc.includes('pizza') ||
+      desc.includes('restaurante')
+    )
+      return 'food';
+
+    if (
+      category.includes('compras') ||
+      desc.includes('mercado') ||
+      desc.includes('supermercado') ||
+      desc.includes('amazon') ||
+      desc.includes('shopee')
     )
       return 'cart-outline';
 
     if (
-      desc.includes('uber') ||
-      desc.includes('pizza') ||
-      desc.includes('ifood')
+      category.includes('saude') ||
+      desc.includes('farmacia') ||
+      desc.includes('consulta')
     )
-      return 'food';
+      return 'medical-bag';
+
+    if (
+      category.includes('lazer') ||
+      desc.includes('netflix') ||
+      desc.includes('spotify')
+    )
+      return 'theater';
+
+    if (
+      category.includes('educacao') ||
+      desc.includes('faculdade') ||
+      desc.includes('curso')
+    )
+      return 'book-open-variant';
 
     return 'cash-multiple';
   };
@@ -391,6 +641,12 @@ export default function Lancamentos() {
             setAmount('');
 
             setType('outcome');
+
+            setSelectedCategoryName('');
+
+            setCategorySuggestion(null);
+
+            setEditMode('replace');
 
             setModalVisible(true);
           }}
@@ -489,7 +745,6 @@ export default function Lancamentos() {
 
                 </Text>
 
-                {/* LIXEIRA APENAS NOS EXTRAS */}
                 {!isSeeder &&
                   item.id && (
 
@@ -569,7 +824,7 @@ export default function Lancamentos() {
                         styles.typeButtonInActive
                       ]}
                       onPress={() =>
-                        setType('income')
+                        handleChangeType('income')
                       }
                     >
 
@@ -592,7 +847,7 @@ export default function Lancamentos() {
                         styles.typeButtonOutActive
                       ]}
                       onPress={() =>
-                        setType('outcome')
+                        handleChangeType('outcome')
                       }
                     >
 
@@ -613,21 +868,115 @@ export default function Lancamentos() {
                 )}
 
                 {/* VALOR */}
-                <Text style={styles.inputLabel}>
-                  Valor (R$)
-                </Text>
+{editingTransaction &&
+  isFixedTransaction(editingTransaction) && (
 
-                <TextInput
-                  style={styles.input}
-                  placeholder="0,00"
-                  keyboardType="numeric"
-                  value={amount}
-                  onChangeText={(text) => {
-                    // Executa a formatação dinâmica e atualiza o estado
-                    const formatted = formatMoney(text);
-                    setAmount(formatted);
-                  }}
-                />
+    <View style={styles.currentAmountBox}>
+      <Text style={styles.currentAmountLabel}>
+        Valor atual
+      </Text>
+
+      <Text style={styles.currentAmountValue}>
+        R$ {editingTransaction.amount
+          .toFixed(2)
+          .replace('.', ',')}
+      </Text>
+    </View>
+  )}
+
+{editingTransaction &&
+  isFixedTransaction(editingTransaction) && (
+
+    <View style={styles.editModeContainer}>
+      <Text style={styles.inputLabel}>
+        Como deseja salvar?
+      </Text>
+
+      <View style={styles.editModeButtons}>
+        <TouchableOpacity
+          style={[
+            styles.editModeButton,
+            editMode === 'add' &&
+            styles.editModeButtonActive
+          ]}
+          onPress={() =>
+            handleChangeEditMode('add')
+          }
+        >
+          <MaterialCommunityIcons
+            name="plus-circle-outline"
+            size={18}
+            color={
+              editMode === 'add'
+                ? '#FFF'
+                : '#1B365D'
+            }
+          />
+
+          <Text
+            style={[
+              styles.editModeButtonText,
+              editMode === 'add' &&
+              styles.editModeButtonTextActive
+            ]}
+          >
+            Adicionar
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={[
+            styles.editModeButton,
+            editMode === 'replace' &&
+            styles.editModeButtonActive
+          ]}
+          onPress={() =>
+            handleChangeEditMode('replace')
+          }
+        >
+          <MaterialCommunityIcons
+            name="pencil-outline"
+            size={18}
+            color={
+              editMode === 'replace'
+                ? '#FFF'
+                : '#1B365D'
+            }
+          />
+
+          <Text
+            style={[
+              styles.editModeButtonText,
+              editMode === 'replace' &&
+              styles.editModeButtonTextActive
+            ]}
+          >
+            Substituir
+          </Text>
+        </TouchableOpacity>
+      </View>
+    </View>
+  )}
+
+<Text style={styles.inputLabel}>
+  {editingTransaction &&
+    isFixedTransaction(editingTransaction)
+      ? editMode === 'add'
+        ? 'Valor a adicionar (R$)'
+        : 'Novo valor total (R$)'
+      : 'Valor (R$)'}
+</Text>
+
+<TextInput
+  style={styles.input}
+  placeholder="0,00"
+  keyboardType="numeric"
+  value={amount}
+  onChangeText={(text) => {
+    const formatted = formatMoney(text);
+    setAmount(formatted);
+  }}
+/>
 
                 {/* DESCRIÇÃO */}
                 {!editingTransaction && (
@@ -647,8 +996,117 @@ export default function Lancamentos() {
                         setDescription
                       }
                     />
+
+                    {categorySuggestion &&
+                      description.trim() !== '' && (
+
+                        <View style={styles.suggestionBox}>
+
+                          <MaterialCommunityIcons
+                            name={
+                              categorySuggestion.requiresConfirmation
+                                ? 'alert-circle-outline'
+                                : 'lightbulb-on-outline'
+                            }
+                            size={20}
+                            color={
+                              categorySuggestion.requiresConfirmation
+                                ? '#F39C12'
+                                : '#27AE60'
+                            }
+                          />
+
+                          <View style={styles.suggestionTextContainer}>
+
+                            <Text style={styles.suggestionText}>
+                              {categorySuggestion.message}
+                            </Text>
+
+                            {categorySuggestion.category &&
+                              categorySuggestion.requiresConfirmation && (
+
+                                <TouchableOpacity
+                                  style={styles.useSuggestionButton}
+                                  onPress={applySuggestedCategory}
+                                >
+
+                                  <Text style={styles.useSuggestionText}>
+                                    Usar {categorySuggestion.category.name}
+                                  </Text>
+
+                                </TouchableOpacity>
+                              )}
+
+                          </View>
+
+                        </View>
+                      )}
                   </>
 
+                )}
+
+                {/* CATEGORIA */}
+                {(!editingTransaction ||
+                  !isFixedTransaction(editingTransaction)) && (
+
+                  <>
+                    <Text style={styles.inputLabel}>
+                      Categoria
+                    </Text>
+
+                    <ScrollView
+                      horizontal
+                      showsHorizontalScrollIndicator={false}
+                      style={styles.categoryScroll}
+                    >
+
+                      {getCategoriesByType().map((category) => {
+
+                        const isSelected =
+                          selectedCategoryName === category.name;
+
+                        return (
+
+                          <TouchableOpacity
+                            key={category.id || category.name}
+                            style={[
+                              styles.categoryChip,
+                              isSelected && {
+                                backgroundColor: category.color,
+                                borderColor: category.color
+                              }
+                            ]}
+                            onPress={() =>
+                              handleSelectCategory(category.name)
+                            }
+                          >
+
+                            <MaterialCommunityIcons
+                              name={category.icon as any}
+                              size={16}
+                              color={
+                                isSelected
+                                  ? '#FFF'
+                                  : category.color
+                              }
+                            />
+
+                            <Text
+                              style={[
+                                styles.categoryChipText,
+                                isSelected &&
+                                styles.categoryChipTextActive
+                              ]}
+                            >
+                              {category.name}
+                            </Text>
+
+                          </TouchableOpacity>
+                        );
+                      })}
+
+                    </ScrollView>
+                  </>
                 )}
 
                 {/* FOOTER */}
@@ -861,6 +1319,68 @@ const styles = StyleSheet.create({
     fontSize: 16
   },
 
+  suggestionBox: {
+    backgroundColor: '#FFF8E7',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 16,
+    flexDirection: 'row',
+    alignItems: 'flex-start'
+  },
+
+  suggestionTextContainer: {
+    flex: 1,
+    marginLeft: 8
+  },
+
+  suggestionText: {
+    color: '#7D6608',
+    fontSize: 12,
+    lineHeight: 17
+  },
+
+  useSuggestionButton: {
+    marginTop: 8,
+    alignSelf: 'flex-start',
+    backgroundColor: '#1B365D',
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 10
+  },
+
+  useSuggestionText: {
+    color: '#FFF',
+    fontSize: 12,
+    fontWeight: 'bold'
+  },
+
+  categoryScroll: {
+    marginBottom: 20
+  },
+
+  categoryChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#DDE3EA',
+    backgroundColor: '#F8F9FA',
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderRadius: 14,
+    marginRight: 8
+  },
+
+  categoryChipText: {
+    color: '#1B365D',
+    fontSize: 13,
+    fontWeight: 'bold',
+    marginLeft: 6
+  },
+
+  categoryChipTextActive: {
+    color: '#FFF'
+  },
+
   modalFooter: {
     flexDirection: 'row',
     justifyContent: 'space-between'
@@ -891,6 +1411,61 @@ const styles = StyleSheet.create({
   saveButtonText: {
     color: '#FFF',
     fontWeight: 'bold'
-  }
+  },
+
+  currentAmountBox: {
+  backgroundColor: '#F4F6F8',
+  borderRadius: 14,
+  padding: 14,
+  marginBottom: 16
+},
+
+currentAmountLabel: {
+  color: '#7F8C8D',
+  fontSize: 13,
+  marginBottom: 4
+},
+
+currentAmountValue: {
+  color: '#1B365D',
+  fontSize: 20,
+  fontWeight: 'bold'
+},
+
+editModeContainer: {
+  marginBottom: 16
+},
+
+editModeButtons: {
+  flexDirection: 'row',
+  gap: 10
+},
+
+editModeButton: {
+  flex: 1,
+  backgroundColor: '#F4F6F8',
+  borderWidth: 1,
+  borderColor: '#DDE3EA',
+  borderRadius: 14,
+  paddingVertical: 12,
+  alignItems: 'center',
+  justifyContent: 'center',
+  flexDirection: 'row'
+},
+
+editModeButtonActive: {
+  backgroundColor: '#1B365D',
+  borderColor: '#1B365D'
+},
+
+editModeButtonText: {
+  color: '#1B365D',
+  fontWeight: 'bold',
+  marginLeft: 6
+},
+
+editModeButtonTextActive: {
+  color: '#FFF'
+}
 
 });
