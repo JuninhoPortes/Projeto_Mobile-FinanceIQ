@@ -5,6 +5,7 @@ import React, {
 
 import OpenFinance from './screens/OpenFinance';
 import OpenFinanceBankDetails from './screens/OpenFinanceBankDetails';
+import MetasFinanceiras from './screens/MetasFinanceiras';
 
 import {
   View,
@@ -166,6 +167,11 @@ export default function AppNavigator() {
       <Stack.Screen
         name="OpenFinanceBankDetails"
         component={OpenFinanceBankDetails}
+      />
+
+      <Stack.Screen
+        name="MetasFinanceiras"
+        component={MetasFinanceiras}
       />
 
     </Stack.Navigator>
