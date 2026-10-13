@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 import {
   View,
@@ -35,6 +35,9 @@ import {
 } from '../services/categorySuggestionService';
 
 import { auth } from '../../firebaseConfig';
+import ReceiptImportSection from '../components/ReceiptImportSection';
+import { prepareReceiptFormPatch } from '../services/receiptFormService';
+import type { ReceiptAnalysisResult } from '../types/receipt';
 
 export default function Lancamentos() {
 
@@ -42,6 +45,15 @@ export default function Lancamentos() {
   // STATES
   // =========================
   const [modalVisible, setModalVisible] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const savingRef = useRef(false);
+  const receiptFormOpenRef = useRef(false);
+  const receiptFormSessionRef = useRef(0);
+  const receiptFormSession = receiptFormSessionRef.current;
+  const receiptCategoryOverrideRef = useRef<{
+    description: string;
+    type: 'income' | 'outcome';
+  } | null>(null);
 
   const [transactions, setTransactions] = useState<Transaction[]>([]);
 
@@ -153,6 +165,7 @@ export default function Lancamentos() {
   const handleChangeType = (
     selectedType: 'income' | 'outcome'
   ) => {
+    receiptCategoryOverrideRef.current = null;
     setType(selectedType);
 
     setSelectedCategoryName('');
@@ -245,6 +258,32 @@ export default function Lancamentos() {
     }
   };
 
+  const applyReceiptAnalysis = (result: ReceiptAnalysisResult): boolean => {
+    if (
+      !receiptFormOpenRef.current || receiptFormSession !== receiptFormSessionRef.current ||
+      !modalVisible || editingTransaction || savingRef.current
+    ) {
+      return false;
+    }
+    const patch = prepareReceiptFormPatch(
+      result, { type, category: selectedCategoryName }, availableCategories
+    );
+    if (Object.keys(patch).length === 0) return false;
+
+    // A sugestão automática não deve substituir a categoria durante a importação.
+    // Uma edição manual da descrição ou tipo devolve o controle ao efeito original.
+    receiptCategoryOverrideRef.current = {
+      description: patch.description ?? description,
+      type: patch.type ?? type
+    };
+    if (patch.description !== undefined) setDescription(patch.description);
+    if (patch.amount !== undefined) setAmount(floatToMoney(patch.amount));
+    if (patch.type !== undefined) setType(patch.type);
+    if (patch.category !== undefined) setSelectedCategoryName(patch.category);
+    setCategorySuggestion(null);
+    return true;
+  };
+
   // =========================
   // EFFECT: CARREGAR DADOS
   // =========================
@@ -261,6 +300,10 @@ export default function Lancamentos() {
     if (editingTransaction) {
       return;
     }
+
+    const imported = receiptCategoryOverrideRef.current;
+    if (imported?.description === description && imported.type === type) return;
+    receiptCategoryOverrideRef.current = null;
 
     const suggestion =
       categorySuggestionService.suggestCategory({
@@ -319,6 +362,9 @@ export default function Lancamentos() {
     const handleEdit = (
       transaction: Transaction
     ) => {
+      receiptFormOpenRef.current = false;
+      receiptFormSessionRef.current += 1;
+      receiptCategoryOverrideRef.current = null;
       const fixedTransaction =
         isFixedTransaction(transaction);
 
@@ -396,6 +442,7 @@ export default function Lancamentos() {
   // SALVAR
   // =========================
 const handleSave = async () => {
+  if (savingRef.current) return;
   if (!amount) {
     Alert.alert(
       'Erro',
@@ -423,6 +470,8 @@ const handleSave = async () => {
     return;
   }
 
+  savingRef.current = true;
+  setIsSaving(true);
   try {
     const parsedAmount = moneyToFloat(amount);
 
@@ -506,6 +555,9 @@ const handleSave = async () => {
     setEditMode('replace');
 
     setModalVisible(false);
+    receiptFormOpenRef.current = false;
+    receiptFormSessionRef.current += 1;
+    receiptCategoryOverrideRef.current = null;
 
     loadData();
 
@@ -520,6 +572,9 @@ const handleSave = async () => {
       'Erro',
       'Não foi possível salvar.'
     );
+  } finally {
+    savingRef.current = false;
+    setIsSaving(false);
   }
 };
 
@@ -527,6 +582,9 @@ const handleSave = async () => {
   // FECHAR MODAL
   // =========================
   const closeModal = () => {
+    receiptFormOpenRef.current = false;
+    receiptFormSessionRef.current += 1;
+    receiptCategoryOverrideRef.current = null;
 
     setModalVisible(false);
 
@@ -633,6 +691,9 @@ const handleSave = async () => {
         <TouchableOpacity
           style={styles.addButton}
           onPress={() => {
+            receiptFormOpenRef.current = true;
+            receiptFormSessionRef.current += 1;
+            receiptCategoryOverrideRef.current = null;
 
             setEditingTransaction(null);
 
@@ -798,7 +859,12 @@ const handleSave = async () => {
 
             <View style={styles.modalOverlay}>
 
-              <View style={styles.modalContent}>
+              <ScrollView
+                style={styles.modalScroll}
+                contentContainerStyle={styles.modalContent}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+              >
 
                 <View style={styles.modalHandle} />
 
@@ -809,6 +875,14 @@ const handleSave = async () => {
                     : 'Novo Lançamento'}
 
                 </Text>
+
+                {modalVisible && !editingTransaction && (
+                  <ReceiptImportSection
+                    categories={availableCategories}
+                    onApply={applyReceiptAnalysis}
+                    disabled={isSaving}
+                  />
+                )}
 
                 {/* TIPO */}
                 {!editingTransaction && (
@@ -992,9 +1066,10 @@ const handleSave = async () => {
                       style={styles.input}
                       placeholder="Ex: Netflix"
                       value={description}
-                      onChangeText={
-                        setDescription
-                      }
+                      onChangeText={(text) => {
+                        receiptCategoryOverrideRef.current = null;
+                        setDescription(text);
+                      }}
                     />
 
                     {categorySuggestion &&
@@ -1130,6 +1205,8 @@ const handleSave = async () => {
                   <TouchableOpacity
                     style={styles.saveButton}
                     onPress={handleSave}
+                    disabled={isSaving}
+                    accessibilityState={{ disabled: isSaving }}
                   >
 
                     <Text
@@ -1144,7 +1221,7 @@ const handleSave = async () => {
 
                 </View>
 
-              </View>
+              </ScrollView>
 
             </View>
 
@@ -1257,6 +1334,14 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 30,
     borderTopRightRadius: 30,
     padding: 25
+  },
+
+  modalScroll: {
+    maxHeight: '90%',
+    flexGrow: 0,
+    backgroundColor: '#FFF',
+    borderTopLeftRadius: 30,
+    borderTopRightRadius: 30
   },
 
   modalHandle: {
