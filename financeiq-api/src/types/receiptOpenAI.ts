@@ -17,11 +17,12 @@ export interface ReceiptResponsesRequest {
 
 export type ReceiptAnalysisOrigin = 'simulated' | 'real';
 
-// O contrato representa a origem futura; não habilita transporte de rede.
-// O adaptador e a rota continuam bloqueando real, sem retries ou fallback.
+// A origem não habilita rede por si só: real exige configuração do servidor.
 export interface ReceiptResponsesTransport {
   readonly mode: ReceiptAnalysisOrigin;
   create(request: ReceiptResponsesRequest, options: { signal: AbortSignal }): Promise<unknown>;
+  // Obrigatório em runtime para real: confirmar término antes do descarte.
+  whenIdle?(): Promise<void>;
 }
 
 export type ReceiptAdapterStatus = 'success' | 'partial' | 'rejected' | 'inconclusive' | 'error' | 'cancelled';

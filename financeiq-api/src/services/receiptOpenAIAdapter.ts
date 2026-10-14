@@ -2,6 +2,7 @@ import { receiptExtractionSchema } from '../schemas/receiptExtractionSchema';
 import { isReceiptExtraction, validateReceiptExtraction } from './receiptExtractionValidation';
 import { receiptFiscalInstructions, receiptCategoryContext } from './receiptFiscalPrompt';
 import { receiptAnalysisMetadata } from './receiptAnalysisMetadata';
+import { receiptUploadConfig } from './receiptUploadLimits';
 import type { ReceiptUpload } from './receiptMultipart';
 import type { ReceiptValidationContext } from '../types/receiptExtraction';
 import type { ReceiptResponsesRequest, ReceiptResponsesTransport, ReceiptAdapterResult, ReceiptAdapterMetrics, ReceiptAnalysisOrigin } from '../types/receiptOpenAI';
@@ -38,6 +39,23 @@ export class ReceiptProviderFailure extends Error {
   constructor(public readonly code: 'TIMEOUT' | 'PROVIDER_AUTH' | 'RATE_LIMIT' | 'UNAVAILABLE' | 'INVALID_REQUEST' | 'INVALID_CONFIGURATION') {
     super('Falha na interpretação do documento.');
   }
+}
+
+// Compartilhado pelo adaptador, transporte e rota. Não lê credenciais.
+export function receiptRealOpenAIConfig(env: NodeJS.ProcessEnv) {
+  if (env.RECEIPT_ANALYSIS_MODE !== 'real' || env.RECEIPT_OPENAI_REAL_CALLS_ENABLED !== 'true' || env.NODE_ENV !== 'development') {
+    throw new ReceiptProviderFailure('INVALID_CONFIGURATION');
+  }
+  const config = receiptOpenAIConfig(env);
+  let upload;
+  try { upload = receiptUploadConfig(env); } catch { throw new ReceiptProviderFailure('INVALID_CONFIGURATION'); }
+  const budget = env.RECEIPT_OPENAI_TEST_BUDGET_USD_CENTS;
+  const testBudgetUsdCents = budget && /^\d+$/.test(budget) ? Number(budget) : NaN;
+  if (!upload.enabled || config.timeoutMs >= upload.processingTimeoutMs || !Number.isSafeInteger(testBudgetUsdCents) || testBudgetUsdCents < 1) {
+    throw new ReceiptProviderFailure('INVALID_CONFIGURATION');
+  }
+  // Declaração para o piloto supervisionado; não é um teto monetário executável.
+  return { ...config, testBudgetUsdCents };
 }
 
 function failureCode(error: unknown): string {
@@ -108,6 +126,12 @@ export function createReceiptOpenAIAdapter(transport: ReceiptResponsesTransport,
   // Configuração capturada exclusivamente do servidor, nunca do documento/contexto.
   const source = options.env ?? process.env;
   const env = {
+    NODE_ENV: source.NODE_ENV,
+    RECEIPT_ANALYSIS_MODE: source.RECEIPT_ANALYSIS_MODE,
+    RECEIPT_OPENAI_REAL_CALLS_ENABLED: source.RECEIPT_OPENAI_REAL_CALLS_ENABLED,
+    RECEIPT_OPENAI_TEST_BUDGET_USD_CENTS: source.RECEIPT_OPENAI_TEST_BUDGET_USD_CENTS,
+    RECEIPT_LIMITS_MODE: source.RECEIPT_LIMITS_MODE,
+    RECEIPT_PROCESSING_TIMEOUT_MS: source.RECEIPT_PROCESSING_TIMEOUT_MS,
     RECEIPT_OPENAI_MODEL: source.RECEIPT_OPENAI_MODEL,
     RECEIPT_OPENAI_TIMEOUT_MS: source.RECEIPT_OPENAI_TIMEOUT_MS,
     RECEIPT_OPENAI_MAX_OUTPUT_TOKENS: source.RECEIPT_OPENAI_MAX_OUTPUT_TOKENS
@@ -125,10 +149,10 @@ export function createReceiptOpenAIAdapter(transport: ReceiptResponsesTransport,
       let timer: ReturnType<typeof setTimeout> | undefined;
       let externalAbort: (() => void) | undefined;
       let timedOut = false;
+      let transportStarted = false;
       try {
-        // Etapa 6B.1: nenhum modo real executa o transporte, mesmo se injetado.
-        if (origin !== 'simulated' || transport.mode !== origin) throw new ReceiptProviderFailure('INVALID_REQUEST');
-        const config = receiptOpenAIConfig(env);
+        if (transport.mode !== origin || (origin === 'real' && typeof transport.whenIdle !== 'function')) throw new ReceiptProviderFailure('INVALID_REQUEST');
+        const config = origin === 'real' ? receiptRealOpenAIConfig(env) : receiptOpenAIConfig(env);
         metrics.model = config.model;
         if (signal?.aborted) throw new Error('cancelled');
         // O chamador deve validar bytes/páginas na Etapa 3. Não aceitar URI/URL.
@@ -152,6 +176,7 @@ export function createReceiptOpenAIAdapter(transport: ReceiptResponsesTransport,
           // Uma única tentativa. Nenhum fallback de modelo ou retry automático.
           Promise.resolve().then(() => {
             if (controller.signal.aborted) throw new Error('cancelled');
+            transportStarted = true;
             return transport.create(request!, { signal: controller.signal });
           }).then(resolve, reject);
         });
@@ -174,6 +199,9 @@ export function createReceiptOpenAIAdapter(transport: ReceiptResponsesTransport,
       } finally {
         if (timer) clearTimeout(timer);
         if (externalAbort) signal?.removeEventListener('abort', externalAbort);
+        // O timeout não abandona o trabalho real. Confirmar limpeza do SDK antes
+        // de limpar o payload, retornar ou permitir ao proprietário zerar bytes.
+        if (origin === 'real' && transportStarted) await transport.whenIdle!();
         // Retirar referências do request, inclusive quando o double ignora abort.
         if (request) {
           for (const item of request.input) for (const part of item.content) {

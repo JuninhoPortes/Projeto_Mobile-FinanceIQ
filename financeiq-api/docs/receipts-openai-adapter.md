@@ -1,4 +1,6 @@
-# Adaptador OpenAI — Etapa 4, somente simulação
+# Adaptador OpenAI — histórico e contratos
+
+**Estado atual, Etapa 6B.2:** o transporte SDK está implementado, com chamadas reais bloqueadas por padrão e testes exclusivamente locais. Consulte [transporte, configuração e limitações](receipts-openai-transport.md). As restrições de somente simulação descritas abaixo registram as etapas anteriores e foram substituídas pelos bloqueios explícitos documentados na 6B.2.
 
 Atualização posterior: a [Etapa 5B.1](receipts-backend-simulation.md) conecta este adaptador à rota exclusivamente com transporte falso, sob ativação explícita em desenvolvimento. O transporte de rede real continua inexistente e o frontend ainda não foi alterado.
 
