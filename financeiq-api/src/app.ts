@@ -1,4 +1,4 @@
-import express, { Request, Response } from 'express';
+import express, { Request, Response, type RequestHandler } from 'express';
 import cors from 'cors';
 import openFinanceRoutes from './routes/openFinanceRoutes';
 import indicatorsRoutes from './routes/indicatorsRoutes';
@@ -9,6 +9,7 @@ import type { ReceiptTokenVerifier } from './types/receiptAuth';
 interface ReceiptAuthDependencies {
   verifyToken?: ReceiptTokenVerifier;
   pilotUIDs?: string;
+  receiptAnalysis?: RequestHandler;
 }
 
 // Separada do listen para testar as rotas reais sem credenciais ou serviços externos.
@@ -19,7 +20,8 @@ export function createApp(dependencies: ReceiptAuthDependencies = {}) {
   // Parser multipart exclusivo da rota, após autenticação/autorização e quotas.
   app.use('/receipts', createReceiptRoutes(
     dependencies.verifyToken ?? createFirebaseTokenVerifier(),
-    dependencies.pilotUIDs ?? process.env.RECEIPT_PILOT_UIDS
+    dependencies.pilotUIDs ?? process.env.RECEIPT_PILOT_UIDS,
+    dependencies.receiptAnalysis
   ));
 
   app.use(express.json());

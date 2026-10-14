@@ -29,7 +29,7 @@ export type ReceiptOpenAIClientFactory = (options: ReceiptOpenAIClientOptions) =
 const sdkClient: ReceiptOpenAIClientFactory = options => new OpenAI(options);
 const cancelled = () => Object.assign(new Error('Receipt analysis cancelled'), { name: 'AbortError' });
 
-export function createReceiptOpenAITransport(env: NodeJS.ProcessEnv, createClient: ReceiptOpenAIClientFactory = sdkClient) {
+export function createReceiptOpenAITransport(env: NodeJS.ProcessEnv, createClient: ReceiptOpenAIClientFactory = sdkClient, beforeSend?: () => Promise<void>) {
   const config = receiptRealOpenAIConfig(env);
   // Só ler a chave depois das habilitações explícitas; nunca usar defaults do SDK.
   const apiKey = env.OPENAI_API_KEY;
@@ -47,6 +47,10 @@ export function createReceiptOpenAITransport(env: NodeJS.ProcessEnv, createClien
       const timer = setTimeout(() => { timedOut = true; controller.abort(); }, config.timeoutMs);
       const task = Promise.resolve().then(async () => {
         try {
+          if (controller.signal.aborted) throw cancelled();
+          // O piloto consome a autorização persistente antes de qualquer envio.
+          // Erro, timeout ou cancelamento após este ponto nunca desfazem a trava.
+          await beforeSend?.();
           if (controller.signal.aborted) throw cancelled();
           client ??= createClient({
             apiKey, maxRetries: 0, timeout: config.timeoutMs,

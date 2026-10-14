@@ -11,6 +11,7 @@ import type { ReceiptAdapterResult, ReceiptAdapterMetrics } from '../types/recei
 export function createReceiptAnalysisMiddleware(env = process.env, dependencies: {
   createOpenAIClient?: ReceiptOpenAIClientFactory;
   onMetrics?: (metrics: ReceiptAdapterMetrics) => void;
+  beforeProviderSend?: () => Promise<void>;
 } = {}): RequestHandler {
   const mode = env.RECEIPT_ANALYSIS_MODE ?? 'disabled';
   if (mode === 'disabled') return createReceiptUpload(env);
@@ -39,7 +40,7 @@ export function createReceiptAnalysisMiddleware(env = process.env, dependencies:
   const settings = realEnv ?? env;
   return createReceiptUpload(settings, validateReceiptDocument, undefined, res => async (document, signal) => {
     // Transporte/adaptador/resultados pertencem exclusivamente a esta requisição.
-    const transport = mode === 'real' ? createReceiptOpenAITransport(settings, dependencies.createOpenAIClient) : createSimulatedReceiptTransport(async (_request, options) => {
+    const transport = mode === 'real' ? createReceiptOpenAITransport(settings, dependencies.createOpenAIClient, dependencies.beforeProviderSend) : createSimulatedReceiptTransport(async (_request, options) => {
       await waitForReceiptSimulation(delayMs, options.signal);
       return simulatedReceiptResponse(scenario as ReceiptSimulationScenario, context);
     });
