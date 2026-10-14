@@ -51,11 +51,15 @@ export function receiptRealOpenAIConfig(env: NodeJS.ProcessEnv) {
   try { upload = receiptUploadConfig(env); } catch { throw new ReceiptProviderFailure('INVALID_CONFIGURATION'); }
   const budget = env.RECEIPT_OPENAI_TEST_BUDGET_USD_CENTS;
   const testBudgetUsdCents = budget && /^\d+$/.test(budget) ? Number(budget) : NaN;
-  if (!upload.enabled || config.timeoutMs >= upload.processingTimeoutMs || !Number.isSafeInteger(testBudgetUsdCents) || testBudgetUsdCents < 1) {
+  const local = env.RECEIPT_REAL_PROFILE === 'local-operational';
+  if ((env.RECEIPT_REAL_PROFILE !== undefined && !local) ||
+    (local && env.RECEIPT_LOCAL_REAL_ENABLED !== 'true') || !upload.enabled || config.timeoutMs >= upload.processingTimeoutMs ||
+    (!local && (!Number.isSafeInteger(testBudgetUsdCents) || testBudgetUsdCents < 1))) {
     throw new ReceiptProviderFailure('INVALID_CONFIGURATION');
   }
-  // Declaração para o piloto supervisionado; não é um teto monetário executável.
-  return { ...config, testBudgetUsdCents };
+  // O piloto conserva sua declaração; o perfil local limita tentativas em ledger próprio.
+  // Nenhum dos perfis representa um teto monetário por meio dessa declaração.
+  return { ...config, testBudgetUsdCents: local ? undefined : testBudgetUsdCents };
 }
 
 function failureCode(error: unknown): string {
@@ -130,6 +134,8 @@ export function createReceiptOpenAIAdapter(transport: ReceiptResponsesTransport,
     RECEIPT_ANALYSIS_MODE: source.RECEIPT_ANALYSIS_MODE,
     RECEIPT_OPENAI_REAL_CALLS_ENABLED: source.RECEIPT_OPENAI_REAL_CALLS_ENABLED,
     RECEIPT_OPENAI_TEST_BUDGET_USD_CENTS: source.RECEIPT_OPENAI_TEST_BUDGET_USD_CENTS,
+    RECEIPT_REAL_PROFILE: source.RECEIPT_REAL_PROFILE,
+    RECEIPT_LOCAL_REAL_ENABLED: source.RECEIPT_LOCAL_REAL_ENABLED,
     RECEIPT_LIMITS_MODE: source.RECEIPT_LIMITS_MODE,
     RECEIPT_PROCESSING_TIMEOUT_MS: source.RECEIPT_PROCESSING_TIMEOUT_MS,
     RECEIPT_OPENAI_MODEL: source.RECEIPT_OPENAI_MODEL,

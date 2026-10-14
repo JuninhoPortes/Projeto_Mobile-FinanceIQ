@@ -21,7 +21,7 @@ export async function startReceiptPilot(env: NodeJS.ProcessEnv = process.env, de
   const port = /^\d+$/.test(portText) ? Number(portText) : NaN;
   const uid = settings.RECEIPT_PILOT_UIDS?.trim();
   const limits = receiptUploadConfig(settings);
-  if (settings.RECEIPT_PILOT_HOST !== '127.0.0.1' || !Number.isSafeInteger(port) || port < 0 || port > 65535 ||
+  if (settings.RECEIPT_REAL_PROFILE !== undefined || settings.RECEIPT_PILOT_HOST !== '127.0.0.1' || !Number.isSafeInteger(port) || port < 0 || port > 65535 ||
     settings.NODE_ENV !== 'development' || !limits.enabled ||
     settings.RECEIPT_REQUESTS_PER_MINUTE !== '1' || settings.RECEIPT_REQUESTS_PER_DAY !== '1' || settings.RECEIPT_GLOBAL_CONCURRENCY !== '1' ||
     !uid || uid.length > 128 || /[\s,*]/.test(uid) || !settings.FIREBASE_PROJECT_ID?.trim() || settings.FIREBASE_AUTH_EMULATOR_HOST !== undefined ||

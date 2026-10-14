@@ -1,5 +1,5 @@
 import express, { Request, Response, type RequestHandler } from 'express';
-import cors from 'cors';
+import cors, { type CorsOptions } from 'cors';
 import openFinanceRoutes from './routes/openFinanceRoutes';
 import indicatorsRoutes from './routes/indicatorsRoutes';
 import { createReceiptRoutes } from './routes/receiptRoutes';
@@ -10,12 +10,13 @@ interface ReceiptAuthDependencies {
   verifyToken?: ReceiptTokenVerifier;
   pilotUIDs?: string;
   receiptAnalysis?: RequestHandler;
+  corsOptions?: CorsOptions;
 }
 
 // Separada do listen para testar as rotas reais sem credenciais ou serviços externos.
 export function createApp(dependencies: ReceiptAuthDependencies = {}) {
   const app = express();
-  app.use(cors());
+  app.use(cors(dependencies.corsOptions));
 
   // Parser multipart exclusivo da rota, após autenticação/autorização e quotas.
   app.use('/receipts', createReceiptRoutes(

@@ -1,5 +1,7 @@
 # Suporte do aplicativo à análise fiscal real
 
+Atualização operacional: os [comandos de análise local](receipts-local.md) agora conectam o aplicativo a uma entrada real supervisionada própria, separada do piloto consumido. As pendências de operação local descritas ao final deste registro são históricas; produção continua bloqueada.
+
 Base: branch `feat/leitura-notas-openai`, revisão pós-piloto `2f86d90`, 463 testes anteriores. O primeiro piloto real relatado concluiu a integração com HTTP 200, `isSimulated=false`, `documentStatus=rejected`, 3867 tokens de entrada, 133 de saída e custo estimado de US$ 0,00349875. Esse piloto não comprovou extração de nota fiscal válida. Esta implementação não faz outra chamada real, não acessa credenciais ou marcador operacional e não libera nova tentativa.
 
 ## Fluxo disponível

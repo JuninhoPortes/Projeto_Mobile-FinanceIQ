@@ -74,4 +74,5 @@ export function createReceiptBackendService(timeoutMs = 45000, mode: 'simulated'
 }
 
 export const receiptBackendService = createReceiptBackendService();
-export const receiptRealBackendService = createReceiptBackendService(45000, 'real');
+// Inclui token + upload (20 s) + validação (8 s) + consumo local (até 45 s).
+export const receiptRealBackendService = createReceiptBackendService(75000, 'real');

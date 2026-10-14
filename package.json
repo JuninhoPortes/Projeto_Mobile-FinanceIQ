@@ -6,7 +6,10 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "receipts:backend": "node scripts/receipts-local.cjs backend",
+    "receipts:web": "node scripts/receipts-local.cjs web",
+    "receipts:android": "node scripts/receipts-local.cjs android"
   },
   "dependencies": {
     "@expo/metro-runtime": "~6.1.2",
