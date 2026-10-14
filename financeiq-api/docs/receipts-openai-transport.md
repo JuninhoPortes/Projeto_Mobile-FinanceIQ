@@ -1,5 +1,7 @@
 # Etapa 6B.2 — transporte OpenAI, sem chamadas reais na entrega
 
+Atualização da Etapa 6B.3: a [validação HTTP completa](receipts-route-validation.md) exercita esta integração com SDK Firebase falso, cliente OpenAI falso e parsers reais, sem alterar código de produção ou iniciar testes pagos. As referências à etapa posterior no final deste documento registram o escopo original da 6B.2.
+
 O transporte `src/services/receiptOpenAITransport.ts` utiliza `openai@7.33.0`, SDK oficial instalado exclusivamente no backend, compatível com Node.js >= 22. A versão é fixa. O transporte foi validado com clientes falsos e com o SDK recebendo um `fetch` falso, sem conexão externa, chave real ou documentos pessoais. O frontend permanece inalterado.
 
 ## Fluxo e responsabilidades
