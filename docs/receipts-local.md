@@ -46,6 +46,16 @@ Entrar na conta autorizada → **+ / Novo Lançamento → Importar nota fiscal �
 
 O backend atual não consulta categorias no Firestore: por isso um resultado aproveitável tende a ser `partial`, sem categoria. Isso permite completar o lançamento no aplicativo. Rejeição/inconclusão continuam sem campos aplicáveis; não alterar regras para aceitar documentos incompatíveis. Uma nota fiscal não comprova a perspectiva de entrada/saída: tipo ausente/inferido precisa de revisão manual. Data extraída é somente informativa e não altera data/competência.
 
+### Conferência de categoria após a importação
+
+Após aplicar uma análise, a seção de categorias recebe borda e fundo de destaque enquanto não houver seleção existente, ativa e compatível com o tipo do lançamento. O aviso é: **“Não foi possível identificar automaticamente uma categoria para este lançamento. Selecione uma categoria antes de salvar.”** A seleção válida remove o aviso e o destaque; desmarcar ou invalidar a categoria volta a mostrá-los. Uma categoria válida já selecionada impede que o aviso apareça. Os avisos independentes de leitura parcial/simulação continuam visíveis.
+
+O salvamento de lançamentos novos e a edição de categoria de lançamentos personalizados verificam validade, atividade e tipo, com feedback de categoria obrigatória. Não se atribui “Outros” nem se cria categoria para liberar o salvamento. A edição de valor dos lançamentos fixos mantém o fluxo anterior. Rejeição/inconclusão/cancelamento que não aplicam dados não iniciam uma pendência de conferência de categoria. Fechar/salvar o formulário encerra esse estado; callbacks antigos não o restauram.
+
+O responsável informou um teste completo bem-sucedido com NFC-e em PDF: análise real, preenchimento, confirmação de Salvar e presença do lançamento na listagem. Esta revisão de UX não repetiu esse teste nem acessou o documento ou suas credenciais.
+
+Verificação da revisão de categoria: sete testes novos de integração, 61 testes do formulário aprovados e suíte completa com **499 aprovados** (492 anteriores preservados), sem falhas/cancelamentos/ignorados. TypeScript frontend/backend e `git diff --check` passaram. Cobertura inclui mock/backend simulado/real com respostas falsas, seleção/desmarcação, categoria inválida/inativa/incompatível, troca de tipo, novas sessões e rejeição/inconclusão/cancelamento. Nenhuma chamada real ou alteração de backend/credenciais foi realizada.
+
 ## Android sem expor o backend na rede
 
 Requer Android SDK Platform Tools (`adb`) no PATH, emulador ou aparelho USB autorizado e Expo Go/ambiente Expo já compatível. Com mais de um dispositivo, definir `ANDROID_SERIAL` para o dispositivo escolhido. Não instala ADB automaticamente.

@@ -46,6 +46,7 @@ export default function Lancamentos() {
   // =========================
   const [modalVisible, setModalVisible] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [hasReceiptToReview, setHasReceiptToReview] = useState(false);
   const savingRef = useRef(false);
   const receiptFormOpenRef = useRef(false);
   const receiptFormSessionRef = useRef(0);
@@ -175,6 +176,7 @@ export default function Lancamentos() {
   );
   const hasValidSelectedCategory = isValidCategorySelection(selectedCategoryName, type);
   const hasValidManualCategory = hasValidSelectedCategory && manualCategoryRef.current === selectedCategoryName;
+  const receiptCategoryPending = hasReceiptToReview && !editingTransaction && !hasValidSelectedCategory;
 
   const handleChangeType = (
     selectedType: 'income' | 'outcome'
@@ -310,6 +312,7 @@ export default function Lancamentos() {
       setSelectedCategoryName(patch.category);
     }
     setCategorySuggestion(null);
+    setHasReceiptToReview(true);
     return true;
   };
 
@@ -417,6 +420,7 @@ export default function Lancamentos() {
         isFixedTransaction(transaction);
 
       setEditingTransaction(transaction);
+      setHasReceiptToReview(false);
 
       setDescription(
         transaction.description
@@ -550,10 +554,10 @@ const handleSave = async () => {
           amountToSave
         );
       } else {
-        if (!selectedCategoryName) {
+        if (!isValidCategorySelection(selectedCategoryName, type)) {
           Alert.alert(
             'Categoria obrigatória',
-            'Selecione uma categoria antes de salvar o lançamento.'
+            'Selecione uma categoria válida e ativa para este tipo de lançamento antes de salvar.'
           );
 
           return;
@@ -568,10 +572,10 @@ const handleSave = async () => {
         );
       }
     } else {
-      if (!selectedCategoryName) {
+      if (!isValidCategorySelection(selectedCategoryName, type)) {
         Alert.alert(
           'Categoria obrigatória',
-          'Selecione uma categoria antes de salvar o lançamento.'
+          'Selecione uma categoria válida e ativa para este tipo de lançamento antes de salvar.'
         );
 
         return;
@@ -603,6 +607,7 @@ const handleSave = async () => {
     setEditMode('replace');
 
     setModalVisible(false);
+    setHasReceiptToReview(false);
     receiptFormOpenRef.current = false;
     receiptFormSessionRef.current += 1;
     receiptCategoryOverrideRef.current = null;
@@ -632,6 +637,7 @@ const handleSave = async () => {
   // FECHAR MODAL
   // =========================
   const closeModal = () => {
+    setHasReceiptToReview(false);
     receiptFormOpenRef.current = false;
     receiptFormSessionRef.current += 1;
     receiptCategoryOverrideRef.current = null;
@@ -750,6 +756,7 @@ const handleSave = async () => {
             automaticCategoryRef.current = null;
 
             setEditingTransaction(null);
+            setHasReceiptToReview(false);
 
             setDescription('');
 
@@ -1183,10 +1190,23 @@ const handleSave = async () => {
                 {(!editingTransaction ||
                   !isFixedTransaction(editingTransaction)) && (
 
-                  <>
+                  <View
+                    testID="transaction-category-section"
+                    style={receiptCategoryPending ? styles.categorySectionPending : undefined}
+                  >
                     <Text style={styles.inputLabel}>
                       Categoria
                     </Text>
+
+                    {receiptCategoryPending && (
+                      <Text
+                        testID="receipt-category-warning"
+                        style={styles.categoryPendingMessage}
+                        accessibilityLiveRegion="polite"
+                      >
+                        Não foi possível identificar automaticamente uma categoria para este lançamento. Selecione uma categoria antes de salvar.
+                      </Text>
+                    )}
 
                     <ScrollView
                       horizontal
@@ -1240,7 +1260,7 @@ const handleSave = async () => {
                       })}
 
                     </ScrollView>
-                  </>
+                  </View>
                 )}
 
                 {/* FOOTER */}
@@ -1496,6 +1516,21 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontSize: 12,
     fontWeight: 'bold'
+  },
+
+  categorySectionPending: {
+    borderWidth: 2,
+    borderColor: '#B45309',
+    backgroundColor: '#FFFBEB',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 16
+  },
+
+  categoryPendingMessage: {
+    color: '#92400E',
+    fontSize: 13,
+    marginBottom: 12
   },
 
   categoryScroll: {

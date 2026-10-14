@@ -202,6 +202,128 @@ const realScreen = (options = {}) => screenRuntime({
   ...options
 });
 
+const receiptCategoryMessage = 'Não foi possível identificar automaticamente uma categoria para este lançamento. Selecione uma categoria antes de salvar.';
+const receiptCategoryWarning = runtime => find(runtime.tree, node => node.props?.testID === 'receipt-category-warning');
+const categorySection = runtime => find(runtime.tree, node => node.props?.testID === 'transaction-category-section');
+
+test('categoria pendente da importação tem aviso e destaque; seleção remove somente esse aviso e Salvar continua explícito', async () => {
+  for (const mode of ['backend-real', 'backend-simulated', 'mock']) {
+    const f = await realScreen();
+    assert.equal(receiptCategoryWarning(f.runtime), undefined);
+    const child = importRuntime(receiptSection(f.runtime).props, mode);
+    const pending = button(child.runtime.tree, 'Escolher arquivo').props.onPress(); await tick();
+    child.finish({ ...analysis('partial'), provider: mode === 'mock' ? 'mock' : 'backend', isSimulated: mode !== 'backend-real',
+      message: mode === 'backend-real' ? 'Leitura parcial do documento. Confira os campos.' : 'Dados demonstrativos. Leitura parcial.' });
+    await pending; f.runtime.render(); child.runtime.render();
+    assert.equal(text(receiptCategoryWarning(f.runtime)), receiptCategoryMessage);
+    assert.equal(receiptCategoryWarning(f.runtime).props.accessibilityLiveRegion, 'polite');
+    assert.equal(categorySection(f.runtime).props.style.borderColor, '#B45309');
+    assert.equal(categorySection(f.runtime).props.style.borderWidth, 2);
+    assert.equal(f.writes.length, 0);
+    await button(f.runtime.tree, 'Salvar').props.onPress(); f.runtime.render();
+    assert.equal(f.writes.length, 0); assert.equal(f.alerts.at(-1)[0], 'Categoria obrigatória');
+    button(f.runtime.tree, 'Compras').props.onPress(); f.runtime.render();
+    assert.equal(receiptCategoryWarning(f.runtime), undefined); assert.equal(categorySection(f.runtime).props.style, undefined);
+    assert.match(text(child.runtime.tree), /[Ll]eitura parcial/);
+    if (mode !== 'backend-real') assert.match(text(child.runtime.tree), /simulad|demonstrativ/);
+    button(f.runtime.tree, 'Compras').props.onPress(); f.runtime.render();
+    assert.equal(text(receiptCategoryWarning(f.runtime)), receiptCategoryMessage);
+    button(f.runtime.tree, 'Compras').props.onPress(); f.runtime.render();
+    const saving = button(f.runtime.tree, 'Salvar').props.onPress();
+    assert.equal(f.writes.length, 1); assert.equal(f.writes[0].data.category, 'Compras');
+    assert.deepEqual(Object.keys(f.writes[0].data).sort(), ['amount', 'category', 'description', 'type']);
+    f.releaseSave(); await saving; f.runtime.render();
+    openNew(f.runtime); assert.equal(receiptCategoryWarning(f.runtime), undefined);
+    child.runtime.unmount(); f.runtime.unmount();
+  }
+});
+
+test('categoria válida manual ou recebida evita aviso e destaque da importação', async () => {
+  for (const manual of [false, true]) {
+    const f = await realScreen();
+    if (manual) { button(f.runtime.tree, 'Compras').props.onPress(); f.runtime.render(); }
+    const result = manual ? analysis('partial') : analysis();
+    assert.equal(receiptSection(f.runtime).props.onApply({ ...result, provider: 'backend', isSimulated: false }), true);
+    f.runtime.render();
+    assert.equal(categorySelected(f.runtime, manual ? 'Compras' : 'Lazer'), true);
+    assert.equal(receiptCategoryWarning(f.runtime), undefined); assert.equal(categorySection(f.runtime).props.style, undefined);
+    assert.equal(f.writes.length, 0); f.runtime.unmount();
+  }
+});
+
+test('seleção obsoleta, inativa ou incompatível após importação volta a destacar e bloqueia salvamento', async () => {
+  for (const change of ['inactive', 'removed', 'type']) {
+    const loaded = categories.map(category => ({ ...category, is_default: true }));
+    const f = await realScreen({ categories: loaded });
+    button(f.runtime.tree, 'Lazer').props.onPress(); f.runtime.render();
+    receiptSection(f.runtime).props.onApply({ ...analysis('partial'), provider: 'backend', isSimulated: false }); f.runtime.render();
+    assert.equal(receiptCategoryWarning(f.runtime), undefined);
+    const selected = loaded.find(category => category.name === 'Lazer');
+    if (change === 'inactive') selected.is_active = false;
+    if (change === 'removed') loaded.splice(loaded.indexOf(selected), 1);
+    if (change === 'type') selected.type = 'income';
+    f.runtime.render();
+    assert.equal(text(receiptCategoryWarning(f.runtime)), receiptCategoryMessage);
+    assert.equal(categorySection(f.runtime).props.style.borderWidth, 2);
+    await button(f.runtime.tree, 'Salvar').props.onPress(); f.runtime.render();
+    assert.equal(f.writes.length, 0); assert.equal(f.alerts.at(-1)[0], 'Categoria obrigatória');
+    assert.match(f.alerts.at(-1)[1], /válida e ativa.*tipo/);
+    f.runtime.unmount();
+  }
+});
+
+test('troca de tipo durante conferência exige seleção compatível sem atribuir categoria padrão', async () => {
+  const f = await realScreen();
+  receiptSection(f.runtime).props.onApply({ ...analysis(), provider: 'backend', isSimulated: false }); f.runtime.render();
+  assert.equal(receiptCategoryWarning(f.runtime), undefined);
+  button(f.runtime.tree, '↑ Entrada').props.onPress(); f.runtime.render();
+  assert.equal(text(receiptCategoryWarning(f.runtime)), receiptCategoryMessage);
+  assert.equal(categorySelected(f.runtime, 'Receita'), false);
+  assert.equal(f.writes.length, 0);
+  button(f.runtime.tree, 'Receita').props.onPress(); f.runtime.render();
+  assert.equal(receiptCategoryWarning(f.runtime), undefined); assert.equal(categorySection(f.runtime).props.style, undefined);
+  f.runtime.unmount();
+});
+
+test('fechamento e reabertura limpam pendência e callback antigo não a restaura', async () => {
+  const f = await realScreen(); const stale = receiptSection(f.runtime).props.onApply;
+  stale(analysis('partial')); f.runtime.render(); assert.ok(receiptCategoryWarning(f.runtime));
+  button(f.runtime.tree, 'Cancelar').props.onPress(); f.runtime.render(); openNew(f.runtime);
+  assert.equal(receiptCategoryWarning(f.runtime), undefined); assert.equal(stale(analysis('partial')), false);
+  f.runtime.render(); assert.equal(receiptCategoryWarning(f.runtime), undefined); f.runtime.unmount();
+});
+
+test('rejeição, inconclusão e cancelamento não criam pendência de uma análise não aplicada', async () => {
+  for (const status of ['rejected', 'inconclusive', 'cancelled']) {
+    const f = await realScreen(); const child = importRuntime(receiptSection(f.runtime).props, 'backend-real');
+    const pending = button(child.runtime.tree, 'Escolher arquivo').props.onPress(); await tick(); child.runtime.render();
+    if (status === 'cancelled') button(child.runtime.tree, 'Cancelar análise').props.onPress();
+    child.finish({ provider: 'backend', isSimulated: false, status: 'error', documentStatus: status,
+      message: status === 'rejected' ? 'Documento incompatível.' : 'Análise inconclusiva.' });
+    await pending; child.runtime.render(); f.runtime.render();
+    assert.equal(receiptCategoryWarning(f.runtime), undefined); assert.equal(categorySection(f.runtime).props.style, undefined);
+    assert.equal(f.writes.length, 0); assert.equal(child.applied.length, 0);
+    assert.match(text(child.runtime.tree), status === 'cancelled' ? /Operação cancelada/ : status === 'rejected' ? /Documento incompatível/ : /Análise inconclusiva/);
+    child.runtime.unmount(); f.runtime.unmount();
+  }
+});
+
+test('edição personalizada bloqueia categoria inativa e permite correção válida sem alterar o payload', async () => {
+  const loaded = categories.map(category => ({ ...category, is_active: category.name !== 'Lazer' }));
+  const f = await realScreen({ categories: loaded, openNew: false, transactions: [{
+    id: 'custom-category', description: 'Assinatura', amount: 10, type: 'outcome', category: 'Lazer'
+  }] });
+  find(f.runtime.tree, node => node.type === 'TouchableOpacity' && node.props.key === 'custom-category').props.onPress(); f.runtime.render();
+  await button(f.runtime.tree, 'Salvar').props.onPress(); f.runtime.render();
+  assert.equal(f.updates.length, 0); assert.equal(f.alerts.at(-1)[0], 'Categoria obrigatória');
+  assert.equal(receiptCategoryWarning(f.runtime), undefined);
+  button(f.runtime.tree, 'Alimentação').props.onPress(); f.runtime.render();
+  await button(f.runtime.tree, 'Salvar').props.onPress();
+  assert.equal(f.updates.length, 1);
+  assert.deepEqual(Object.keys(f.updates[0].data).sort(), ['amount', 'category']);
+  assert.equal(f.updates[0].data.category, 'Alimentação'); f.runtime.unmount();
+});
+
 const merchantScreen = () => realScreen({
   categories: loadTypeScript('src/constants/defaultCategories.ts').defaultCategories.map((category, index) => ({
     ...category, id: String(index), user_id: 'test-user', is_active: true, is_default: true
