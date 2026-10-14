@@ -30,162 +30,48 @@ const normalizeText = (value: string) => {
     .replace(/[\u0300-\u036f]/g, '');
 };
 
-const getRelevantTokens = (value: string) => {
-  return normalizeText(value)
-    .split(/\s+/)
-    .filter(token => token.length >= 3);
-};
+const tokenize = (value: string) => Array.from(
+  value.matchAll(/[\p{L}\p{N}]+/gu),
+  match => ({ value: match[0], start: match.index, end: match.index + match[0].length })
+);
+type Tokens = ReturnType<typeof tokenize>;
 
-const findMatchedKeyword = (
-  description: string,
-  keywords: string[]
-): string | undefined => {
-  const normalizedDescription = normalizeText(description);
+function isTransport99(description: string, tokens: Tokens, index: number): boolean {
+  const token = tokens[index];
+  const before = description.slice(0, token.start);
+  const after = description.slice(token.end);
+  // Não confundir 99,90, 1,99, R$ 99 ou 99 reais com o nome do serviço.
+  if (/\d[.,]\s*$/.test(before) || /^[.,]\s*\d/.test(after) ||
+    /(?:r\$|\$|brl)\s*$/.test(before) || /^\s*(?:reais|real|brl)\b/.test(after)) return false;
+  // Contexto local explícito, sem ampliar o vocabulário de estabelecimentos.
+  return tokens.slice(Math.max(0, index - 2), index + 3).some(item =>
+    ['app', 'aplicativo', 'taxi', 'corrida', 'transporte'].includes(item.value)
+  );
+}
 
-  return keywords.find((keyword) => {
-    return normalizedDescription.includes(
-      normalizeText(keyword)
-    );
-  });
-};
+function matchesPhrase(description: string, tokens: Tokens, phrase: Tokens): boolean {
+  if (!phrase.length) return false;
+  return tokens.some((_token, index) =>
+    phrase.every((part, offset) => tokens[index + offset]?.value === part.value) &&
+    (phrase.length !== 1 || phrase[0].value !== '99' || isTransport99(description, tokens, index))
+  );
+}
 
-const findCategoryByName = (
-  categories: Category[],
-  categoryName: string,
-  type: CategoryType
-): Category | null => {
-  const normalizedCategoryName = normalizeText(categoryName);
+interface CategoryMatch {
+  category: Category;
+  matchedKeyword?: string;
+  // Nome completo da descrição > expressão composta > palavra isolada.
+  priority: number;
+  confidence: SuggestionConfidence;
+  requiresConfirmation: boolean;
+}
 
-  const foundCategory = categories.find((category) => {
-    return (
-      category.is_active &&
-      category.type === type &&
-      normalizeText(category.name) === normalizedCategoryName
-    );
-  });
-
-  return foundCategory || null;
-};
-
-const calculateCategoryNameMatchScore = (
-  description: string,
-  categoryName: string
-) => {
-  const normalizedDescription = normalizeText(description);
-  const normalizedCategoryName = normalizeText(categoryName);
-
-  if (!normalizedDescription || normalizedDescription.length < 3) {
-    return 0;
-  }
-
-  if (normalizedDescription === normalizedCategoryName) {
-    return 100;
-  }
-
-  if (
-    normalizedDescription.length >= 4 &&
-    normalizedCategoryName.startsWith(normalizedDescription)
-  ) {
-    return 95;
-  }
-
-  if (normalizedDescription.includes(normalizedCategoryName)) {
-    return 90;
-  }
-
-  const descriptionTokens = getRelevantTokens(description);
-  const categoryTokens = getRelevantTokens(categoryName);
-
-  if (descriptionTokens.length === 0 || categoryTokens.length === 0) {
-    return 0;
-  }
-
-  const matchedTokens = descriptionTokens.filter((descriptionToken) => {
-    return categoryTokens.some((categoryToken) => {
-      return (
-        categoryToken.startsWith(descriptionToken) ||
-        descriptionToken.startsWith(categoryToken)
-      );
-    });
-  });
-
-  const allDescriptionTokensMatched =
-    matchedTokens.length === descriptionTokens.length;
-
-  if (allDescriptionTokensMatched) {
-    return 85;
-  }
-
-  const matchRatio =
-    matchedTokens.length / descriptionTokens.length;
-
-  if (matchRatio >= 0.7) {
-    return 70;
-  }
-
-  return 0;
-};
-
-const findBestCategoryMatchFromDescription = (
-  description: string,
-  categories: Category[],
-  type: CategoryType
-): Category | null => {
-  const activeCategories = categories.filter((category) => {
-    return (
-      category.is_active &&
-      category.type === type
-    );
-  });
-
-  const rankedCategories = activeCategories
-    .map((category) => {
-      return {
-        category,
-        score: calculateCategoryNameMatchScore(
-          description,
-          category.name
-        )
-      };
-    })
-    .filter(item => item.score >= 70)
-    .sort((a, b) => {
-      if (b.score !== a.score) {
-        return b.score - a.score;
-      }
-
-      return b.category.name.length - a.category.name.length;
-    });
-
-  return rankedCategories[0]?.category || null;
-};
-
-const buildCategoryNameSuggestion = (
-  category: Category
-): CategorySuggestion => {
-  const isCustomCategory = !category.is_default;
-
-  if (isCustomCategory) {
-    return {
-      category,
-      categoryName: category.name,
-      confidence: 'media',
-      shouldAutoSelect: false,
-      requiresConfirmation: true,
-      message:
-        `Sugestão: ${category.name}. Confirme se essa categoria faz sentido para este lançamento.`
-    };
-  }
-
-  return {
-    category,
-    categoryName: category.name,
-    confidence: 'alta',
-    shouldAutoSelect: true,
-    requiresConfirmation: false,
-    message: `Categoria sugerida: ${category.name}.`
-  };
-};
+const unresolved = (ambiguous = false): CategorySuggestion => ({
+  category: null, confidence: 'baixa', shouldAutoSelect: false, requiresConfirmation: true,
+  message: ambiguous
+    ? 'Mais de uma categoria corresponde à descrição. Escolha a categoria manualmente.'
+    : 'Nenhuma categoria foi sugerida automaticamente. Escolha a categoria manualmente.'
+});
 
 export const categorySuggestionService = {
   suggestCategory: ({
@@ -193,74 +79,55 @@ export const categorySuggestionService = {
     type,
     categories
   }: SuggestCategoryParams): CategorySuggestion | null => {
-    const cleanDescription = description.trim();
+    if (!description.trim()) return null;
+    const normalizedDescription = normalizeText(description);
+    const tokens = tokenize(normalizedDescription);
+    const activeCategories = categories.filter(category => category.is_active && category.type === type);
+    const matches: CategoryMatch[] = [];
 
-    if (!cleanDescription) {
-      return null;
-    }
-
-    const categoryByName =
-      findBestCategoryMatchFromDescription(
-        cleanDescription,
-        categories,
-        type
-      );
-
-    if (categoryByName) {
-      return buildCategoryNameSuggestion(
-        categoryByName
-      );
+    for (const category of activeCategories) {
+      const name = tokenize(normalizeText(category.name));
+      if (!matchesPhrase(normalizedDescription, tokens, name)) continue;
+      matches.push({
+        category, priority: name.length === tokens.length ? 3 : name.length > 1 ? 2 : 1,
+        confidence: category.is_default ? 'alta' : 'media', requiresConfirmation: !category.is_default
+      });
     }
 
     for (const rule of categoryKeywordRules) {
-      if (rule.type !== type) {
-        continue;
+      if (rule.type !== type) continue;
+      const compatible = activeCategories.filter(category => normalizeText(category.name) === normalizeText(rule.categoryName));
+      for (const keyword of rule.keywords) {
+        const phrase = tokenize(normalizeText(keyword));
+        if (!matchesPhrase(normalizedDescription, tokens, phrase)) continue;
+        for (const category of compatible) {
+          matches.push({
+            category, matchedKeyword: keyword, priority: phrase.length > 1 ? 2 : 1,
+            confidence: !category.is_default && rule.confidence === 'alta' ? 'media' : rule.confidence,
+            requiresConfirmation: !category.is_default || !!rule.requiresConfirmation || rule.confidence !== 'alta'
+          });
+        }
       }
-
-      const matchedKeyword = findMatchedKeyword(
-        cleanDescription,
-        rule.keywords
-      );
-
-      if (!matchedKeyword) {
-        continue;
-      }
-
-      const category = findCategoryByName(
-        categories,
-        rule.categoryName,
-        type
-      );
-
-      if (!category) {
-        continue;
-      }
-
-      const requiresConfirmation =
-        rule.requiresConfirmation ||
-        rule.confidence === 'baixa' ||
-        rule.confidence === 'media';
-
-      return {
-        category,
-        categoryName: category.name,
-        matchedKeyword,
-        confidence: rule.confidence,
-        shouldAutoSelect: !requiresConfirmation,
-        requiresConfirmation,
-        message: requiresConfirmation
-          ? `Sugestão: ${category.name}. Confirme se essa categoria faz sentido para este lançamento.`
-          : `Categoria sugerida: ${category.name}.`
-      };
     }
 
+    if (!matches.length) return unresolved();
+    const priority = Math.max(...matches.map(match => match.priority));
+    const best = matches.filter(match => match.priority === priority);
+    // Nem ordem de cadastro, ordem das regras ou tamanho de palavra desempatam categorias.
+    if (new Set(best.map(match => match.category)).size !== 1) return unresolved(true);
+    // Expressões superam termos genéricos, mas não descartam evidência forte de outra categoria.
+    if (priority === 2 && matches.some(match =>
+      match.priority === 1 && match.category !== best[0].category && match.confidence === 'alta'
+    )) return unresolved(true);
+    // Para a mesma categoria, preservar a exigência de confirmação mais conservadora.
+    const match = best.find(candidate => candidate.requiresConfirmation) ?? best[0];
+    const { category, confidence, requiresConfirmation, matchedKeyword } = match;
     return {
-      category: null,
-      confidence: 'baixa',
-      shouldAutoSelect: false,
-      requiresConfirmation: true,
-      message:
-        'Nenhuma categoria foi sugerida automaticamente. Escolha a categoria manualmente.'
+      category, categoryName: category.name, matchedKeyword, confidence,
+      shouldAutoSelect: !requiresConfirmation, requiresConfirmation,
+      message: requiresConfirmation
+        ? `Sugestão: ${category.name}. Confirme se essa categoria faz sentido para este lançamento.`
+        : `Categoria sugerida: ${category.name}.`
     };
   }
 };

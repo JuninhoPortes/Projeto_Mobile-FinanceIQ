@@ -202,6 +202,153 @@ const realScreen = (options = {}) => screenRuntime({
   ...options
 });
 
+test('motor real: digitação progressiva de barbearia remove seleção automática intermediária', async () => {
+  const f = await realScreen();
+  for (const [description, selected] of [['b', false], ['ba', false], ['bar', true], ['barb', false], ['barbearia', false]]) {
+    changeDescription(f.runtime, description);
+    assert.equal(categorySelected(f.runtime, 'Lazer'), selected, description);
+  }
+  assert.ok(text(f.runtime.tree).includes(pendingCategoryMessage));
+  assert.equal(f.writes.length, 0);
+  assert.equal(f.categoryReads(), 1);
+  f.runtime.unmount();
+});
+
+test('motor real: colar barbearia não seleciona Lazer', async () => {
+  const f = await realScreen();
+  changeDescription(f.runtime, 'barbearia');
+  assert.equal(categorySelected(f.runtime, 'Lazer'), false);
+  assert.ok(text(f.runtime.tree).includes(pendingCategoryMessage));
+  f.runtime.unmount();
+});
+
+test('motor real: Compras manual permanece durante digitação progressiva e troca para Netflix', async () => {
+  const f = await realScreen();
+  button(f.runtime.tree, 'Compras').props.onPress(); f.runtime.render();
+  for (const description of ['b', 'ba', 'bar', 'barb', 'barbearia', 'Netflix', '']) {
+    changeDescription(f.runtime, description);
+    assert.equal(categorySelected(f.runtime, 'Compras'), true, description);
+    assert.equal(categorySelected(f.runtime, 'Lazer'), false);
+    assert.equal(text(f.runtime.tree).includes('Categoria sugerida: Lazer.'), false);
+  }
+  assert.equal(f.writes.length, 0);
+  f.runtime.unmount();
+});
+
+test('motor real: Usar Compras protege a seleção contra perda de correspondência e outra sugestão', async () => {
+  const f = await realScreen();
+  changeDescription(f.runtime, 'Loja de testes');
+  button(f.runtime.tree, 'Usar Compras').props.onPress(); f.runtime.render();
+  for (const description of ['bar', 'barbearia', 'Netflix', '']) {
+    changeDescription(f.runtime, description);
+    assert.equal(categorySelected(f.runtime, 'Compras'), true, description);
+    assert.equal(categorySelected(f.runtime, 'Lazer'), false);
+  }
+  f.runtime.unmount();
+});
+
+test('motor real: seleção automática acompanha novas sugestões e é removida na ambiguidade', async () => {
+  const f = await realScreen();
+  changeDescription(f.runtime, 'bar');
+  assert.equal(categorySelected(f.runtime, 'Lazer'), true);
+  changeDescription(f.runtime, 'Restaurante');
+  assert.equal(categorySelected(f.runtime, 'Alimentação'), true);
+  assert.equal(categorySelected(f.runtime, 'Lazer'), false);
+  changeDescription(f.runtime, 'Netflix restaurante');
+  assert.equal(categorySelected(f.runtime, 'Alimentação'), false);
+  assert.equal(categorySelected(f.runtime, 'Lazer'), false);
+  assert.match(text(f.runtime.tree), /Mais de uma categoria/);
+  changeDescription(f.runtime, 'Netflix');
+  assert.equal(categorySelected(f.runtime, 'Lazer'), true);
+  assert.equal(f.categoryReads(), 1);
+  f.runtime.unmount();
+});
+
+test('motor real: apagar descrição remove somente a categoria de origem automática', async () => {
+  const f = await realScreen();
+  changeDescription(f.runtime, 'Netflix');
+  assert.equal(categorySelected(f.runtime, 'Lazer'), true);
+  changeDescription(f.runtime, '');
+  assert.equal(categorySelected(f.runtime, 'Lazer'), false);
+  assert.equal(text(f.runtime.tree).includes(pendingCategoryMessage), false);
+  f.runtime.unmount();
+});
+
+test('motor real: sugestão que exige confirmação substitui aviso mas não mantém seleção automática obsoleta', async () => {
+  const f = await realScreen();
+  changeDescription(f.runtime, 'Netflix');
+  changeDescription(f.runtime, 'Loja de testes');
+  assert.equal(categorySelected(f.runtime, 'Lazer'), false);
+  assert.equal(categorySelected(f.runtime, 'Compras'), false);
+  assert.ok(button(f.runtime.tree, 'Usar Compras'));
+  f.runtime.unmount();
+});
+
+test('motor real: cancelar e reabrir não conserva seleção automática nem aceita callback antigo', async () => {
+  const f = await realScreen();
+  changeDescription(f.runtime, 'bar');
+  assert.equal(categorySelected(f.runtime, 'Lazer'), true);
+  const staleApply = receiptSection(f.runtime).props.onApply;
+  button(f.runtime.tree, 'Cancelar').props.onPress(); f.runtime.render();
+  openNew(f.runtime);
+  assert.equal(staleApply(analysis()), false);
+  assert.equal(categorySelected(f.runtime, 'Lazer'), false);
+  changeDescription(f.runtime, 'barbearia');
+  assert.equal(categorySelected(f.runtime, 'Lazer'), false);
+  changeDescription(f.runtime, 'Restaurante');
+  assert.equal(categorySelected(f.runtime, 'Alimentação'), true);
+  assert.equal(f.writes.length, 0);
+  f.runtime.unmount();
+});
+
+test('motor real: categoria aplicada pela importação deixa de pertencer ao efeito automático', async () => {
+  const f = await realScreen();
+  changeDescription(f.runtime, 'bar');
+  receiptSection(f.runtime).props.onApply(analysis()); f.runtime.render();
+  changeDescription(f.runtime, 'barbearia');
+  assert.equal(categorySelected(f.runtime, 'Lazer'), true); // categoria explícita da importação, não da digitação.
+  assert.equal(f.writes.length, 0);
+  f.runtime.unmount();
+});
+
+test('motor real: importação sem categoria preserva o valor anterior e mantém sua origem automática', async () => {
+  const f = await realScreen();
+  changeDescription(f.runtime, 'bar');
+  receiptSection(f.runtime).props.onApply({ ...analysis('partial'), provider: 'backend' }); f.runtime.render();
+  assert.equal(categorySelected(f.runtime, 'Lazer'), true); // campo ausente não apaga a seleção na importação.
+  changeDescription(f.runtime, 'barbearia');
+  assert.equal(categorySelected(f.runtime, 'Lazer'), false);
+  assert.ok(text(f.runtime.tree).includes(pendingCategoryMessage));
+  f.runtime.unmount();
+});
+
+test('motor real: mudança de tipo invalida origem automática e permite sugestão compatível', async () => {
+  const f = await realScreen();
+  changeDescription(f.runtime, 'bar');
+  button(f.runtime.tree, '↑ Entrada').props.onPress(); f.runtime.render();
+  assert.equal(button(f.runtime.tree, 'Lazer'), undefined);
+  assert.equal(categorySelected(f.runtime, 'Receita'), false);
+  changeDescription(f.runtime, 'Salário');
+  assert.equal(categorySelected(f.runtime, 'Receita'), true);
+  f.runtime.unmount();
+});
+
+test('motor real: resposta tardia não substitui sugestão automática da descrição mais recente', async () => {
+  const f = await realScreen();
+  changeDescription(f.runtime, 'bar');
+  const child = importRuntime(receiptSection(f.runtime).props, 'backend-simulated');
+  const pending = button(child.runtime.tree, 'Escolher arquivo').props.onPress(); await tick();
+  changeDescription(f.runtime, 'Restaurante');
+  child.finish({ ...analysis(), provider: 'backend' }); await pending;
+  f.runtime.render(); child.runtime.render();
+  assert.equal(categorySelected(f.runtime, 'Alimentação'), true);
+  assert.equal(categorySelected(f.runtime, 'Lazer'), false);
+  assert.equal(input(f.runtime, 'Ex: Netflix').props.value, 'Restaurante');
+  assert.match(text(child.runtime.tree), /campos foram editados/);
+  assert.equal(f.writes.length, 0);
+  child.runtime.unmount(); f.runtime.unmount();
+});
+
 test('motor real: aviso pendente desaparece com seleção válida e reaparece ao desmarcar', async () => {
   const f = await realScreen();
   changeDescription(f.runtime, 'XYZ');
