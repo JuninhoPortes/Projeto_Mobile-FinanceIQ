@@ -1,9 +1,12 @@
 import { receiptExtractionSchema } from '../schemas/receiptExtractionSchema';
 import { isReceiptExtraction, validateReceiptExtraction } from './receiptExtractionValidation';
 import { receiptFiscalInstructions, receiptCategoryContext } from './receiptFiscalPrompt';
+import { receiptAnalysisMetadata } from './receiptAnalysisMetadata';
 import type { ReceiptUpload } from './receiptMultipart';
 import type { ReceiptValidationContext } from '../types/receiptExtraction';
-import type { ReceiptResponsesRequest, ReceiptResponsesTransport, ReceiptAdapterResult, ReceiptAdapterMetrics } from '../types/receiptOpenAI';
+import type { ReceiptResponsesRequest, ReceiptResponsesTransport, ReceiptAdapterResult, ReceiptAdapterMetrics, ReceiptAnalysisOrigin } from '../types/receiptOpenAI';
+
+type ReceiptAdapterOutcome = Omit<ReceiptAdapterResult, 'origin' | 'metrics'>;
 
 const profiles = {
   'gpt-5.4-mini': [0.75, 0.075, 4.5],
@@ -62,9 +65,11 @@ function measureUsage(raw: unknown, metrics: ReceiptAdapterMetrics, model: keyof
   metrics.estimatedCostUsd = ((usage.input_tokens - cachedTokens) * inputPrice + cachedTokens * cachePrice + usage.output_tokens * outputPrice) / 1_000_000;
 }
 
-function decodeResponse(raw: unknown, context: ReceiptValidationContext): Omit<ReceiptAdapterResult, 'metrics'> {
-  const fail = (code: string): Omit<ReceiptAdapterResult, 'metrics'> => ({
-    status: 'error', code, analysis: { provider: 'backend', isSimulated: true, status: 'error', message: 'Interpretação simulada indisponível. Continue preenchendo manualmente.' }
+function decodeResponse(raw: unknown, context: ReceiptValidationContext, isSimulated: boolean): ReceiptAdapterOutcome {
+  const fail = (code: string): ReceiptAdapterOutcome => ({
+    status: 'error', code, analysis: { provider: 'backend', isSimulated, status: 'error', message: isSimulated
+      ? 'Interpretação simulada indisponível. Continue preenchendo manualmente.'
+      : 'Interpretação indisponível. Continue preenchendo manualmente.' }
   });
   if (!object(raw)) return fail('INVALID_RESPONSE');
   if (raw.status === 'failed') return fail(failureCode(raw.error));
@@ -90,13 +95,16 @@ function decodeResponse(raw: unknown, context: ReceiptValidationContext): Omit<R
   const { assessment, analysis } = validated;
   const status = assessment.acceptance === 'rejected' ? 'rejected'
     : assessment.acceptance === 'undetermined' || analysis.status === 'error' ? 'inconclusive' : analysis.status;
-  return { status, assessment, analysis: { ...analysis, isSimulated: true, message: `Simulação: ${analysis.message}` } };
+  return { status, assessment, analysis: { ...analysis, isSimulated, message: isSimulated ? `Simulação: ${analysis.message}` : analysis.message } };
 }
 
 export function createReceiptOpenAIAdapter(transport: ReceiptResponsesTransport, options: {
   env?: NodeJS.ProcessEnv;
+  origin?: ReceiptAnalysisOrigin;
   onMetrics?: (metrics: ReceiptAdapterMetrics) => void;
 } = {}) {
+  // Snapshot de configuração interna. Não aceitar a origem enviada pelo provedor.
+  const { origin, isSimulated } = receiptAnalysisMetadata(options.origin ?? 'simulated');
   // Configuração capturada exclusivamente do servidor, nunca do documento/contexto.
   const source = options.env ?? process.env;
   const env = {
@@ -108,17 +116,18 @@ export function createReceiptOpenAIAdapter(transport: ReceiptResponsesTransport,
     async analyze(upload: ReceiptUpload, context: ReceiptValidationContext, signal?: AbortSignal): Promise<ReceiptAdapterResult> {
       const started = Date.now();
       const metrics: ReceiptAdapterMetrics = {
-        model: 'unconfigured', isSimulated: true, status: 'error', durationMs: 0,
+        model: 'unconfigured', isSimulated, status: 'error', durationMs: 0,
         inputTokens: null, cachedInputTokens: null, outputTokens: null, estimatedCostUsd: null
       };
-      let outcome: Omit<ReceiptAdapterResult, 'metrics'>;
+      let outcome: ReceiptAdapterOutcome;
       let request: ReceiptResponsesRequest | undefined;
       const controller = new AbortController();
       let timer: ReturnType<typeof setTimeout> | undefined;
       let externalAbort: (() => void) | undefined;
       let timedOut = false;
       try {
-        if (transport.mode !== 'simulated') throw new ReceiptProviderFailure('INVALID_REQUEST');
+        // Etapa 6B.1: nenhum modo real executa o transporte, mesmo se injetado.
+        if (origin !== 'simulated' || transport.mode !== origin) throw new ReceiptProviderFailure('INVALID_REQUEST');
         const config = receiptOpenAIConfig(env);
         metrics.model = config.model;
         if (signal?.aborted) throw new Error('cancelled');
@@ -149,16 +158,18 @@ export function createReceiptOpenAIAdapter(transport: ReceiptResponsesTransport,
         const expectedModels = config.model.startsWith('gpt-5.4-mini')
           ? ['gpt-5.4-mini', 'gpt-5.4-mini-2026-03-17'] : ['gpt-4.1-mini', 'gpt-4.1-mini-2025-04-14'];
         if (object(raw) && raw.model !== undefined && !expectedModels.includes(raw.model as string)) {
-          outcome = { status: 'error', code: 'UNEXPECTED_MODEL', analysis: { provider: 'backend', isSimulated: true, status: 'error', message: 'Resposta simulada incompatível com o modelo configurado.' } };
+          outcome = { status: 'error', code: 'UNEXPECTED_MODEL', analysis: { provider: 'backend', isSimulated, status: 'error', message: isSimulated ? 'Resposta simulada incompatível com o modelo configurado.' : 'Resposta incompatível com o modelo configurado.' } };
         } else {
           measureUsage(raw, metrics, config.model);
-          outcome = signal?.aborted ? { status: 'cancelled', code: 'CANCELLED', analysis: { provider: 'backend', isSimulated: true, status: 'error', message: 'Operação simulada cancelada.' } } : decodeResponse(raw, context);
+          outcome = signal?.aborted ? { status: 'cancelled', code: 'CANCELLED', analysis: { provider: 'backend', isSimulated, status: 'error', message: isSimulated ? 'Operação simulada cancelada.' : 'Operação cancelada.' } } : decodeResponse(raw, context, isSimulated);
         }
       } catch (error) {
         outcome = {
           status: !timedOut && signal?.aborted ? 'cancelled' : 'error',
           code: timedOut ? 'TIMEOUT' : signal?.aborted ? 'CANCELLED' : failureCode(error),
-          analysis: { provider: 'backend', isSimulated: true, status: 'error', message: 'Não foi possível interpretar o documento na simulação. Continue preenchendo manualmente.' }
+          analysis: { provider: 'backend', isSimulated, status: 'error', message: isSimulated
+            ? 'Não foi possível interpretar o documento na simulação. Continue preenchendo manualmente.'
+            : 'Não foi possível interpretar o documento. Continue preenchendo manualmente.' }
         };
       } finally {
         if (timer) clearTimeout(timer);
@@ -177,7 +188,10 @@ export function createReceiptOpenAIAdapter(transport: ReceiptResponsesTransport,
       metrics.status = outcome.status;
       metrics.durationMs = Date.now() - started;
       try { options.onMetrics?.({ ...metrics }); } catch { /* Observabilidade não altera o resultado. */ }
-      return { ...outcome, metrics };
+      // Manter a correlação literal entre origem, análise e métricas no contrato.
+      return origin === 'simulated'
+        ? { ...outcome, origin, analysis: { ...outcome.analysis, isSimulated: true }, metrics: { ...metrics, isSimulated: true } }
+        : { ...outcome, origin, analysis: { ...outcome.analysis, isSimulated: false }, metrics: { ...metrics, isSimulated: false } };
     }
   };
 }

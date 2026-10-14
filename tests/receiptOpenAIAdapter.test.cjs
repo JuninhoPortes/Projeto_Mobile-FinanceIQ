@@ -285,3 +285,36 @@ test('modelo divergente na resposta não permite troca silenciosa nem estimativa
   assert.equal(result.metrics.estimatedCostUsd, null);
   assert.equal('fields' in result.analysis, false);
 });
+
+test('origem vem da configuração interna capturada, não do contexto ou resposta do provedor', async () => {
+  const options = { env: {}, origin: 'simulated' };
+  const transport = simulatedTransport(response(undefined, { origin: 'real', isSimulated: false, provider: 'mock' }));
+  const adapter = createReceiptOpenAIAdapter(transport, options);
+  options.origin = 'real'; // alteração posterior não muda a sessão configurada.
+  const result = await adapter.analyze(upload(), { ...context, origin: 'real', isSimulated: false });
+  assert.equal(result.status, 'success');
+  assert.equal(result.origin, 'simulated');
+  assert.equal(result.analysis.provider, 'backend');
+  assert.equal(result.analysis.isSimulated, true);
+  assert.equal(result.metrics.isSimulated, true);
+  assert.match(result.analysis.message, /^Simulação:/);
+  assert.equal(transport.calls.length, 1);
+});
+
+test('origem real e transportes incompatíveis continuam bloqueados antes de qualquer chamada', async () => {
+  for (const origin of ['simulated', 'real']) for (const mode of ['simulated', 'real', 'live']) {
+    if (origin === 'simulated' && mode === 'simulated') continue;
+    let calls = 0;
+    const transport = { mode, create() { calls++; assert.fail('Transporte não autorizado'); } };
+    const result = await createReceiptOpenAIAdapter(transport, { origin, env: {} }).analyze(upload(), context);
+    assert.equal(calls, 0);
+    assert.equal(result.status, 'error');
+    assert.equal(result.code, 'INVALID_REQUEST');
+    assert.equal(result.origin, origin);
+    assert.equal(result.analysis.isSimulated, origin === 'simulated');
+    assert.equal(result.metrics.isSimulated, origin === 'simulated');
+    assert.equal(result.metrics.estimatedCostUsd, null);
+    assert.equal('fields' in result.analysis, false);
+    assert.equal(/simulação|simulada/i.test(result.analysis.message), origin === 'simulated');
+  }
+});

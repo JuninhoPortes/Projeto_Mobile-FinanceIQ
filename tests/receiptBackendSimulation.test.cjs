@@ -290,3 +290,29 @@ test('resultados e transportes são isolados entre requisições concorrentes', 
   assert.deepEqual(results.map(result => result.status), [200, 200]);
   assert.ok(results.every(result => result.body.isSimulated && result.body.fields.amount === 129.9));
 });
+
+test('cliente não altera origem por query ou multipart e modo real não cai na simulação', async t => {
+  const file = { bytes: await image() };
+  const originalCreate = simulationTransport.createSimulatedReceiptTransport;
+  let transports = 0;
+  simulationTransport.createSimulatedReceiptTransport = (...args) => { transports++; return originalCreate(...args); };
+  t.after(() => { simulationTransport.createSimulatedReceiptTransport = originalCreate; });
+  const { request } = await endpoint(t);
+  const simulated = await request(multipart([file]), 'pilot', '?origin=real&isSimulated=false&mode=real');
+  assert.equal(simulated.status, 200);
+  assert.equal(simulated.body.isSimulated, true);
+  assert.match(simulated.body.message, /Dados demonstrativos/);
+  assert.equal('origin' in simulated.body, false);
+  for (const field of ['origin', 'isSimulated']) {
+    assert.equal((await request(multipart([file], [[field, 'real']]))).status, 400);
+  }
+  assert.equal(transports, 1);
+  for (const NODE_ENV of ['development', 'test', 'production']) {
+    const { request: realRequest } = await endpoint(t, { RECEIPT_ANALYSIS_MODE: 'real', NODE_ENV });
+    const blocked = await realRequest(multipart([file]), 'pilot', '?origin=simulated&mode=simulated');
+    assert.equal(blocked.status, 503);
+    assert.equal(blocked.body.code, 'RECEIPT_ANALYSIS_UNAVAILABLE');
+    for (const key of ['fields', 'assessment', 'isSimulated']) assert.equal(key in blocked.body, false);
+  }
+  assert.equal(transports, 1);
+});

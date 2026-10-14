@@ -25,7 +25,7 @@ export function createReceiptAnalysisMiddleware(env = process.env): RequestHandl
       await waitForReceiptSimulation(delayMs, options.signal);
       return simulatedReceiptResponse(scenario as ReceiptSimulationScenario, context);
     });
-    const adapter = createReceiptOpenAIAdapter(transport, { env });
+    const adapter = createReceiptOpenAIAdapter(transport, { env, origin: mode });
     let result: ReceiptAdapterResult;
     try {
       result = await adapter.analyze({ bytes: document.readBytes(), format: document.format }, context, signal);

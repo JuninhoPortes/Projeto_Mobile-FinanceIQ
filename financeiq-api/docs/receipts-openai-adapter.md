@@ -2,6 +2,16 @@
 
 Atualização posterior: a [Etapa 5B.1](receipts-backend-simulation.md) conecta este adaptador à rota exclusivamente com transporte falso, sob ativação explícita em desenvolvimento. O transporte de rede real continua inexistente e o frontend ainda não foi alterado.
 
+## Atualização da Etapa 6B.1 — contratos de origem
+
+O resultado interno agora contém `origin: 'simulated' | 'real'`, correlacionado por tipos com `analysis.isSimulated` e `metrics.isSimulated`. `receiptAnalysisMetadata.ts` deriva os indicadores de uma origem interna explícita e verifica a consistência antes da resposta. Não modifica o esquema fiscal, os validadores ou os campos do contrato HTTP.
+
+A origem é capturada na fábrica do adaptador por opção exclusiva de código do servidor, com padrão simulado para compatibilidade. A ponte passa explicitamente o modo validado do servidor. Corpo, query, documento e resposta do provedor não definem metadados confiáveis. O controller rejeita combinações inconsistentes com 503 e sem campos aplicáveis. Mensagens demonstrativas são acrescentadas somente à origem simulada; os contratos reais são exercitados com dados sintéticos, sem transporte real.
+
+Representar `real` no contrato não o habilita. O middleware continua recusando `RECEIPT_ANALYSIS_MODE=real`, e o adaptador também bloqueia origem real ou transporte divergente antes de chamar `create`. `disabled` preserva 501 após upload válido; simulação continua restrita a desenvolvimento, autenticação/UID autorizado e controles locais. Não existe fallback de modo. Autenticação, quotas, timeout, cancelamento e descarte não foram alterados.
+
+O frontend permanece inalterado e aceita somente o backend simulado. Transporte real, SDK, credenciais, revisão de prazos/custos e habilitação explícita ficam para uma etapa posterior autorizada. Nenhuma dependência ou configuração privada foi alterada. As seções abaixo registram a implementação original das etapas anteriores.
+
 ## Escopo e módulos
 
 O adaptador é isolado: nenhum controller, rota ou serviço do frontend o importa. `POST /receipts/analyze` continua com o fluxo da Etapa 3 e retorna 501 depois de um upload válido autorizado. Não existe SDK OpenAI, transporte HTTP real, API key ou ativação por variável de ambiente nesta etapa.

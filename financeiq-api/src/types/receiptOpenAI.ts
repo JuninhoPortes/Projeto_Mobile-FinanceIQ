@@ -15,19 +15,21 @@ export interface ReceiptResponsesRequest {
   max_output_tokens: number;
 }
 
-// Não existe transporte de rede nesta etapa. Um transporte futuro precisará de
-// aprovação e deverá implementar este método, respeitando signal e sem retries.
+export type ReceiptAnalysisOrigin = 'simulated' | 'real';
+
+// O contrato representa a origem futura; não habilita transporte de rede.
+// O adaptador e a rota continuam bloqueando real, sem retries ou fallback.
 export interface ReceiptResponsesTransport {
-  mode: 'simulated';
+  readonly mode: ReceiptAnalysisOrigin;
   create(request: ReceiptResponsesRequest, options: { signal: AbortSignal }): Promise<unknown>;
 }
 
 export type ReceiptAdapterStatus = 'success' | 'partial' | 'rejected' | 'inconclusive' | 'error' | 'cancelled';
-type Simulated<T> = T extends unknown ? Omit<T, 'isSimulated'> & { isSimulated: true } : never;
+type WithSimulation<T, IsSimulated extends boolean> = T extends unknown ? Omit<T, 'isSimulated'> & { isSimulated: IsSimulated } : never;
 
-export interface ReceiptAdapterMetrics {
+export interface ReceiptAdapterMetrics<IsSimulated extends boolean = boolean> {
   model: string;
-  isSimulated: true;
+  isSimulated: IsSimulated;
   status: ReceiptAdapterStatus;
   durationMs: number;
   inputTokens: number | null;
@@ -36,10 +38,16 @@ export interface ReceiptAdapterMetrics {
   estimatedCostUsd: number | null;
 }
 
-export interface ReceiptAdapterResult {
+interface ReceiptAdapterData<IsSimulated extends boolean> {
   status: ReceiptAdapterStatus;
   code?: string;
-  analysis: Simulated<ValidatedReceiptAnalysis>;
+  analysis: WithSimulation<ValidatedReceiptAnalysis, IsSimulated>;
   assessment?: ReceiptAssessment;
-  metrics: ReceiptAdapterMetrics;
+  metrics: ReceiptAdapterMetrics<IsSimulated>;
 }
+
+// Origem interna: não acrescenta campos ao contrato HTTP nem ao JSON do modelo.
+// Impede combinar origem simulada com análise/métricas reais, ou vice-versa.
+export type ReceiptAdapterResult =
+  | ({ readonly origin: 'simulated' } & ReceiptAdapterData<true>)
+  | ({ readonly origin: 'real' } & ReceiptAdapterData<false>);

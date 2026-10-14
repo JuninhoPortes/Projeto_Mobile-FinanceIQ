@@ -24,7 +24,9 @@ function loadTypeScript(file, dependencies = {}, globals = {}) {
 // Somente módulos reais do backend e mocks explícitos do Firebase/HTTP externo.
 // Uma dependência inesperada (inclusive OpenAI) falha no loader existente.
 const middleware = loadTypeScript('financeiq-api/src/middleware/receiptAuth.ts');
-const controller = loadTypeScript('financeiq-api/src/controllers/receiptController.ts');
+const controller = loadTypeScript('financeiq-api/src/controllers/receiptController.ts', {
+  '../services/receiptAnalysisMetadata': loadTypeScript('financeiq-api/src/services/receiptAnalysisMetadata.ts')
+});
 const receipts = loadTypeScript('financeiq-api/src/routes/receiptRoutes.ts', {
   express, '../controllers/receiptController': controller, '../middleware/receiptAuth': middleware,
   // Esta suíte isola a autenticação; upload real é coberto em receiptUpload.test.cjs.
