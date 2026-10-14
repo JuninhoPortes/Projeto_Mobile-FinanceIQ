@@ -1,4 +1,4 @@
-import type { RequestHandler } from 'express';
+import type { RequestHandler, Response } from 'express';
 import { receiptUploadConfig, LocalReceiptLimits, type ReceiptUploadConfig } from '../services/receiptUploadLimits';
 import { receiveReceipt, type ReceiptUpload } from '../services/receiptMultipart';
 import { validateReceiptDocument } from '../services/receiptDocumentValidation';
@@ -16,7 +16,7 @@ const messages: Record<number, string> = {
 };
 
 // Injeção apenas por código para testes; não exposta no corpo ou no ambiente.
-export function createReceiptUpload(env = process.env, validate = validateReceiptDocument, consume?: ReceiptDocumentConsumer): RequestHandler {
+export function createReceiptUpload(env = process.env, validate = validateReceiptDocument, consume?: ReceiptDocumentConsumer, consumerForResponse?: (res: Response) => ReceiptDocumentConsumer): RequestHandler {
   let config: ReceiptUploadConfig | undefined;
   try { config = receiptUploadConfig(env); } catch { /* Configuração inválida falha fechada. */ }
   const limits = config ? new LocalReceiptLimits(config) : undefined;
@@ -54,7 +54,8 @@ export function createReceiptUpload(env = process.env, validate = validateReceip
       clearTimeout(timer);
       await validate(upload, config, controller.signal);
       // Só disponibilizar bytes após a validação real concluir e dentro da reserva.
-      if (consume) await withReceiptDocument(upload, consume, controller.signal, config.processingTimeoutMs);
+      const currentConsumer = consumerForResponse ? consumerForResponse(res) : consume;
+      if (currentConsumer) await withReceiptDocument(upload, currentConsumer, controller.signal, config.processingTimeoutMs);
     } catch (error) { failed = true; failure = error; }
     finally {
       clearTimeout(timer);

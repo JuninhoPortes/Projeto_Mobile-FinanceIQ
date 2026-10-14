@@ -28,7 +28,7 @@ const controller = loadTypeScript('financeiq-api/src/controllers/receiptControll
 const receipts = loadTypeScript('financeiq-api/src/routes/receiptRoutes.ts', {
   express, '../controllers/receiptController': controller, '../middleware/receiptAuth': middleware,
   // Esta suíte isola a autenticação; upload real é coberto em receiptUpload.test.cjs.
-  '../middleware/receiptUpload': { createReceiptUpload: () => (_req, _res, next) => next() }
+  '../middleware/receiptAnalysis': { createReceiptAnalysisMiddleware: () => (_req, _res, next) => next() }
 });
 const openFinanceService = loadTypeScript('financeiq-api/src/services/openFinanceMockService.ts');
 const openFinanceController = loadTypeScript('financeiq-api/src/controllers/openFinanceController.ts', {

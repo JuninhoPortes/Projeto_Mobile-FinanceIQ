@@ -1,5 +1,7 @@
 # Etapa 5A — posse temporária e ciclo de vida documental
 
+Atualização posterior: a [Etapa 5B.1](receipts-backend-simulation.md) habilita opcionalmente um consumidor simulado apenas em desenvolvimento. O padrão continua desabilitado/501. A fábrica por resposta preserva a posse e as reservas descritas abaixo e aguarda o transporte confirmar término.
+
 ## Diagnóstico e correção
 
 Antes, `receiptUpload.ts` validava e descartava `upload.bytes` em `finally`, liberava a reserva e só então executava `next()`/controller. O adaptador não poderia receber os bytes nesse controller.

@@ -1,5 +1,7 @@
 # Adaptador OpenAI — Etapa 4, somente simulação
 
+Atualização posterior: a [Etapa 5B.1](receipts-backend-simulation.md) conecta este adaptador à rota exclusivamente com transporte falso, sob ativação explícita em desenvolvimento. O transporte de rede real continua inexistente e o frontend ainda não foi alterado.
+
 ## Escopo e módulos
 
 O adaptador é isolado: nenhum controller, rota ou serviço do frontend o importa. `POST /receipts/analyze` continua com o fluxo da Etapa 3 e retorna 501 depois de um upload válido autorizado. Não existe SDK OpenAI, transporte HTTP real, API key ou ativação por variável de ambiente nesta etapa.

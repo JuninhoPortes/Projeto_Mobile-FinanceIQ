@@ -1,5 +1,7 @@
 # Upload documental — Etapa 3
 
+Atualização posterior: na [Etapa 5B.1](receipts-backend-simulation.md), o padrão continua em 501; apenas a configuração explícita do simulador em desenvolvimento permite resposta demonstrativa após validação e descarte. Os limites desta página permanecem aplicados.
+
 ## Fluxo e contrato
 
 `POST /receipts/analyze`: Bearer → verificação Firebase → piloto por UID → quota e concorrência → multipart → validação isolada → consumidor interno opcional aguardado → descarte → HTTP 501. A rota padrão não instala consumidor. Autenticação e autorização da Etapa 2 não foram alteradas. Consulte o [ciclo de vida da Etapa 5A](receipts-document-lifecycle.md) para posse temporária e garantias de encerramento.

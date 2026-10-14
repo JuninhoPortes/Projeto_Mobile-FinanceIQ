@@ -1,4 +1,5 @@
 const extraction = require('../fixtures/receiptExtraction.json');
+const { createSimulatedReceiptTransport } = require('../../financeiq-api/src/services/receiptSimulatedTransport.ts');
 
 function response(value = structuredClone(extraction), overrides = {}) {
   return {
@@ -12,15 +13,12 @@ function response(value = structuredClone(extraction), overrides = {}) {
 function simulatedTransport(reply = response()) {
   const calls = [];
   const references = [];
-  const transport = {
-    mode: 'simulated', calls, references,
-    async create(request, options) {
+  const transport = createSimulatedReceiptTransport((request, options) => {
       calls.push({ request: structuredClone(request), signal: options.signal });
       references.push(request);
       return typeof reply === 'function' ? reply(request, options) : structuredClone(reply);
-    }
-  };
-  return transport;
+  });
+  return Object.assign(transport, { calls, references });
 }
 
 module.exports = { response, simulatedTransport, extraction: () => structuredClone(extraction) };
