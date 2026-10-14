@@ -47,6 +47,7 @@ interface ReceiptAnalysisMetadata {
   provider: 'mock' | 'backend';
   isSimulated: boolean;
   message: string;
+  documentStatus?: 'success' | 'partial' | 'rejected' | 'inconclusive';
 }
 
 export type ReceiptAnalysisResult = ReceiptAnalysisMetadata & (
@@ -56,7 +57,7 @@ export type ReceiptAnalysisResult = ReceiptAnalysisMetadata & (
   | { status: 'cancelled' }
 );
 
-// Uma implementação futura poderá chamar o backend mantendo este contrato.
+// Contrato compartilhado pelo mock local e pelas análises do backend.
 export interface ReceiptInterpretationService {
   analyze(
     document: ReceiptDocument,

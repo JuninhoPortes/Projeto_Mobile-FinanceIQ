@@ -1,39 +1,15 @@
-import express, { Request, Response } from 'express';
-import cors from 'cors';
 import dotenv from 'dotenv';
-
-import openFinanceRoutes from './routes/openFinanceRoutes';
-import indicatorsRoutes from './routes/indicatorsRoutes';
+import { createApp } from './app';
 
 dotenv.config();
 
-const app = express();
-
-const PORT = Number(process.env.PORT) || 3000;
-
-app.use(cors());
-
-app.use(express.json());
-
-app.get('/health', (_req: Request, res: Response) => {
-  return res.status(200).json({
-    status: 'ok',
-    message: 'FinanceIQ API funcionando corretamente.',
-    timestamp: new Date().toISOString()
+if (process.env.RECEIPT_ANALYSIS_MODE === 'real') {
+  console.error('Modo real exige uma entrada explícita: piloto ou npm run receipts:backend na raiz.');
+  process.exitCode = 1;
+} else {
+  const app = createApp();
+  const PORT = Number(process.env.PORT) || 3000;
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`FinanceIQ API rodando na porta ${PORT}`);
   });
-});
-
-app.use('/open-finance', openFinanceRoutes);
-
-app.use('/indicators', indicatorsRoutes);
-
-app.use((_req: Request, res: Response) => {
-  return res.status(404).json({
-    error: true,
-    message: 'Rota não encontrada.'
-  });
-});
-
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`FinanceIQ API rodando na porta ${PORT}`);
-});
+}

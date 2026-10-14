@@ -3,21 +3,24 @@ import { ActivityIndicator, Keyboard, Modal, Platform, ScrollView, StyleSheet, T
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useIsFocused } from '@react-navigation/native';
 import { acquireReceiptDocument, releaseReceiptDocument } from '../services/receiptAcquisitionService';
-import { receiptAnalysisService } from '../services/receiptAnalysisService';
+import { receiptAnalysisMode, receiptAnalysisService } from '../services/receiptAnalysisService';
 import type { ReceiptAnalysisContext, ReceiptAnalysisResult, ReceiptDocument, ReceiptSource } from '../types/receipt';
 
 interface ReceiptImportSectionProps {
   categories: ReceiptAnalysisContext['categories'];
   onApply: (result: ReceiptAnalysisResult) => boolean;
+  getFormRevision?: () => number;
   disabled?: boolean;
 }
 
 export default function ReceiptImportSection(props: ReceiptImportSectionProps) {
   const [optionsVisible, setOptionsVisible] = useState(false);
-  const [status, setStatus] = useState<'idle' | 'selecting' | 'selected' | 'analyzing' | 'success' | 'partial' | 'cancelled' | 'error'>('idle');
+  const [status, setStatus] = useState<'idle' | 'selecting' | 'selected' | 'analyzing' | 'success' | 'partial' | 'rejected' | 'inconclusive' | 'cancelled' | 'error'>('idle');
   const [selectedDocument, setSelectedDocument] = useState<ReceiptDocument | null>(null);
   const [errorMessage, setErrorMessage] = useState('');
   const [analysisMessage, setAnalysisMessage] = useState('');
+  const [analysisIsSimulated, setAnalysisIsSimulated] = useState(true);
+  const [identifiedDate, setIdentifiedDate] = useState('');
   const operationRef = useRef<AbortController | null>(null);
   const documentRef = useRef<ReceiptDocument | null>(null);
   const isFocused = useIsFocused();
@@ -58,8 +61,11 @@ export default function ReceiptImportSection(props: ReceiptImportSectionProps) {
   const selectDocument = async (source: ReceiptSource) => {
     if (operationRef.current || propsRef.current.disabled) return;
     const controller = new AbortController();
+    const formRevision = propsRef.current.getFormRevision?.();
     operationRef.current = controller;
     setErrorMessage('');
+    setAnalysisMessage('');
+    setIdentifiedDate('');
     setStatus('selecting');
 
     try {
@@ -89,15 +95,23 @@ export default function ReceiptImportSection(props: ReceiptImportSectionProps) {
       );
       if (operationRef.current !== controller || controller.signal.aborted) return;
       if (analysis.status === 'success' || analysis.status === 'partial') {
+        if (propsRef.current.getFormRevision?.() !== formRevision) {
+          setErrorMessage('Os campos foram editados durante a análise e foram preservados. Inicie outra importação se desejar.');
+          setStatus('error');
+          return;
+        }
         if (propsRef.current.disabled || !propsRef.current.onApply(analysis)) {
           setStatus('cancelled');
           return;
         }
         setAnalysisMessage(analysis.message);
+        setAnalysisIsSimulated(analysis.isSimulated);
+        setIdentifiedDate(analysis.fields.identifiedDate ?? '');
         setStatus(analysis.status);
       } else if (analysis.status === 'error') {
         setErrorMessage(analysis.message);
-        setStatus('error');
+        setStatus(analysis.documentStatus === 'rejected' || analysis.documentStatus === 'inconclusive'
+          ? analysis.documentStatus : 'error');
       } else {
         setStatus('cancelled');
       }
@@ -114,16 +128,24 @@ export default function ReceiptImportSection(props: ReceiptImportSectionProps) {
   const notice = status === 'selecting'
     ? 'Aguardando seleção... Você pode cancelar e continuar preenchendo manualmente.'
     : status === 'analyzing'
-      ? 'Analisando nota fiscal... Análise simulada, sem leitura real do documento.'
+      ? receiptAnalysisMode === 'backend-real'
+        ? 'Analisando o documento... Aguarde a resposta e revise os dados antes de salvar.'
+        : 'Analisando nota fiscal... Análise simulada, sem leitura real do documento.'
       : status === 'success' || status === 'partial'
         ? analysisMessage
         : status === 'selected'
           ? 'Arquivo selecionado.'
           : status === 'cancelled'
             ? 'Operação cancelada. Os campos do formulário foram preservados.'
-            : status === 'error'
+            : status === 'error' || status === 'rejected' || status === 'inconclusive'
               ? errorMessage
-              : 'Selecione JPG/JPEG, PNG ou PDF de até 10 MB. A análise retorna dados simulados e pode substituir campos preenchidos. Nenhum documento será enviado a serviços externos.';
+              : receiptAnalysisMode === 'backend-simulated'
+                ? 'Selecione JPG/JPEG, PNG ou PDF de até 10 MiB. O documento será enviado ao servidor FinanceIQ. Os dados retornados são demonstrativos, sem leitura real do conteúdo. Revise antes de salvar.'
+                : receiptAnalysisMode === 'backend-real'
+                  ? 'Selecione JPG/JPEG, PNG ou PDF de até 10 MiB. O documento será enviado ao servidor FinanceIQ e à OpenAI para análise. Revise e corrija os campos antes de salvar. Nenhum lançamento será criado automaticamente.'
+                : receiptAnalysisMode === 'unavailable'
+                  ? 'Análise indisponível neste ambiente. Continue preenchendo manualmente.'
+                  : 'Selecione JPG/JPEG, PNG ou PDF de até 10 MB. A análise retorna dados simulados e pode substituir campos preenchidos. Nenhum documento será enviado a serviços externos.';
 
   return (
     <>
@@ -141,11 +163,18 @@ export default function ReceiptImportSection(props: ReceiptImportSectionProps) {
         <Text style={styles.buttonText}>Importar nota fiscal</Text>
       </TouchableOpacity>
 
-      {(status === 'success' || status === 'partial') && (
+      {(status === 'success' || status === 'partial' || status === 'rejected' || status === 'inconclusive' || status === 'error') && (
         <Text style={styles.formNotice} accessibilityLiveRegion="polite">
-          {status === 'partial'
-            ? 'Leitura parcial simulada. Revise os campos antes de salvar.'
-            : 'Dados simulados preenchidos. Revise antes de salvar.'}
+          {status === 'error' || status === 'rejected' || status === 'inconclusive' ? errorMessage
+            : analysisIsSimulated
+              ? status === 'partial' ? 'Leitura parcial simulada. Revise os campos antes de salvar.' : 'Dados simulados preenchidos. Revise antes de salvar.'
+              : analysisMessage}
+        </Text>
+      )}
+      {(status === 'success' || status === 'partial') && identifiedDate !== '' && (
+        <Text style={styles.formNotice}>
+          {analysisIsSimulated ? 'Data demonstrativa' : 'Data identificada no documento'}: {identifiedDate.split('-').reverse().join('/')}.
+          {' '}Informação para conferência; a data do lançamento foi preservada.
         </Text>
       )}
 
@@ -188,7 +217,7 @@ export default function ReceiptImportSection(props: ReceiptImportSectionProps) {
               </Text>
 
               {status === 'analyzing' && (
-                <ActivityIndicator color="#1B365D" accessibilityLabel="Analisando nota fiscal, simulação" />
+                <ActivityIndicator color="#1B365D" accessibilityLabel={receiptAnalysisMode === 'backend-real' ? 'Analisando nota fiscal' : 'Analisando nota fiscal, simulação'} />
               )}
 
               {selectedDocument && (

@@ -2,6 +2,10 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { loadTypeScript, createHookRuntime, find, text, button, native } = require('./helpers/receiptTestRuntime.cjs');
 const { prepareReceiptFormPatch } = loadTypeScript('src/services/receiptFormService.ts');
+const categoryKeywords = loadTypeScript('src/constants/categoryKeywords.ts');
+const { categorySuggestionService: realCategorySuggestionService } = loadTypeScript('src/services/categorySuggestionService.ts', {
+  '../constants/categoryKeywords': categoryKeywords
+});
 const categories = [
   { name: 'Receita', type: 'income', is_active: true, color: '#111111' },
   { name: 'Alimentação', type: 'outcome', is_active: true, color: '#222222' },
@@ -22,6 +26,8 @@ async function screenRuntime(options = {}) {
   const alerts = [];
   const updates = [];
   const removals = [];
+  const loadedCategories = options.categories ?? categories;
+  let categoryReads = 0;
   let releaseSave;
   let rejectSave;
   const transactionService = {
@@ -39,8 +45,8 @@ async function screenRuntime(options = {}) {
     'react-native': { ...native, Alert: { alert: (...args) => alerts.push(args) } },
     '@expo/vector-icons': { MaterialCommunityIcons: 'Icon' },
     '../database/transactionService': { transactionService },
-    '../database/categoryService': { categoryService: { listAll: async () => categories } },
-    '../services/categorySuggestionService': { categorySuggestionService: {
+    '../database/categoryService': { categoryService: { listAll: async () => { categoryReads++; return loadedCategories; } } },
+    '../services/categorySuggestionService': { categorySuggestionService: options.realSuggestions ? realCategorySuggestionService : {
       suggestCategory: ({ description, type }) => !description ? null : {
         category: categories.find(category => category.name === (type === 'income' ? 'Receita' : 'Alimentação')),
         shouldAutoSelect: true
@@ -58,7 +64,7 @@ async function screenRuntime(options = {}) {
     runtime.render();
   }
   return {
-    runtime, writes, alerts, updates, removals,
+    runtime, writes, alerts, updates, removals, categoryReads: () => categoryReads,
     releaseSave: () => releaseSave(),
     rejectSave: () => rejectSave(new Error('Falha fictícia de persistência'))
   };
@@ -145,10 +151,11 @@ test('fechar e reabrir o formulário invalida até um callback capturado anterio
   runtime.unmount();
 });
 
-function importRuntime() {
+function importRuntime(props = {}, mode) {
   const runtime = createHookRuntime();
   let focused = true;
   let resolveAnalysis;
+  const analyses = [];
   let passedSignal;
   const applied = [];
   const released = [];
@@ -162,23 +169,794 @@ function importRuntime() {
       acquireReceiptDocument: async () => ({ status: 'selected', document: doc }),
       releaseReceiptDocument: document => released.push(document)
     },
-    '../services/receiptAnalysisService': { receiptAnalysisService: {
+    '../services/receiptAnalysisService': { receiptAnalysisMode: mode, receiptAnalysisService: {
       analyze: (document, context, signal) => {
         passedSignal = signal;
-        return new Promise(resolve => { resolveAnalysis = resolve; });
+        return new Promise(resolve => { resolveAnalysis = resolve; analyses.push(resolve); });
       }
     } }
   }).default;
-  runtime.mount(component, { categories, onApply: result => { applied.push(result); return true; } });
+  runtime.mount(component, { categories, onApply: result => { applied.push(result); return true; }, ...props });
   button(runtime.tree, 'Importar nota fiscal').props.onPress();
   runtime.render();
   return {
     runtime, applied, released,
-    finish: value => resolveAnalysis(value),
+    finish: (value, index) => index === undefined ? resolveAnalysis(value) : analyses[index](value),
     signal: () => passedSignal,
     blur: () => { focused = false; runtime.render(); }
   };
 }
+
+const pendingCategoryMessage = 'Nenhuma categoria foi sugerida automaticamente. Escolha a categoria manualmente.';
+const categorySelected = (runtime, name) => !!button(runtime.tree, name)?.props.style[1];
+const receiptSection = runtime => find(runtime.tree, node => node.type === 'ReceiptImportSection');
+const openNew = runtime => {
+  find(runtime.tree, node => node.type === 'TouchableOpacity' && !!find(node, child => child.type === 'Icon' && child.props.name === 'plus')).props.onPress();
+  runtime.render();
+};
+const changeDescription = (runtime, value) => { input(runtime, 'Ex: Netflix').props.onChangeText(value); runtime.render(); };
+const realScreen = (options = {}) => screenRuntime({
+  realSuggestions: true,
+  categories: [...categories.map(category => ({ ...category, is_default: true })),
+    { name: 'Compras', type: 'outcome', is_active: true, is_default: true, color: '#444444' }],
+  ...options
+});
+
+const receiptCategoryMessage = 'Não foi possível identificar automaticamente uma categoria para este lançamento. Selecione uma categoria antes de salvar.';
+const receiptCategoryWarning = runtime => find(runtime.tree, node => node.props?.testID === 'receipt-category-warning');
+const categorySection = runtime => find(runtime.tree, node => node.props?.testID === 'transaction-category-section');
+
+test('categoria pendente da importação tem aviso e destaque; seleção remove somente esse aviso e Salvar continua explícito', async () => {
+  for (const mode of ['backend-real', 'backend-simulated', 'mock']) {
+    const f = await realScreen();
+    assert.equal(receiptCategoryWarning(f.runtime), undefined);
+    const child = importRuntime(receiptSection(f.runtime).props, mode);
+    const pending = button(child.runtime.tree, 'Escolher arquivo').props.onPress(); await tick();
+    child.finish({ ...analysis('partial'), provider: mode === 'mock' ? 'mock' : 'backend', isSimulated: mode !== 'backend-real',
+      message: mode === 'backend-real' ? 'Leitura parcial do documento. Confira os campos.' : 'Dados demonstrativos. Leitura parcial.' });
+    await pending; f.runtime.render(); child.runtime.render();
+    assert.equal(text(receiptCategoryWarning(f.runtime)), receiptCategoryMessage);
+    assert.equal(receiptCategoryWarning(f.runtime).props.accessibilityLiveRegion, 'polite');
+    assert.equal(categorySection(f.runtime).props.style.borderColor, '#B45309');
+    assert.equal(categorySection(f.runtime).props.style.borderWidth, 2);
+    assert.equal(f.writes.length, 0);
+    await button(f.runtime.tree, 'Salvar').props.onPress(); f.runtime.render();
+    assert.equal(f.writes.length, 0); assert.equal(f.alerts.at(-1)[0], 'Categoria obrigatória');
+    button(f.runtime.tree, 'Compras').props.onPress(); f.runtime.render();
+    assert.equal(receiptCategoryWarning(f.runtime), undefined); assert.equal(categorySection(f.runtime).props.style, undefined);
+    assert.match(text(child.runtime.tree), /[Ll]eitura parcial/);
+    if (mode !== 'backend-real') assert.match(text(child.runtime.tree), /simulad|demonstrativ/);
+    button(f.runtime.tree, 'Compras').props.onPress(); f.runtime.render();
+    assert.equal(text(receiptCategoryWarning(f.runtime)), receiptCategoryMessage);
+    button(f.runtime.tree, 'Compras').props.onPress(); f.runtime.render();
+    const saving = button(f.runtime.tree, 'Salvar').props.onPress();
+    assert.equal(f.writes.length, 1); assert.equal(f.writes[0].data.category, 'Compras');
+    assert.deepEqual(Object.keys(f.writes[0].data).sort(), ['amount', 'category', 'description', 'type']);
+    f.releaseSave(); await saving; f.runtime.render();
+    openNew(f.runtime); assert.equal(receiptCategoryWarning(f.runtime), undefined);
+    child.runtime.unmount(); f.runtime.unmount();
+  }
+});
+
+test('categoria válida manual ou recebida evita aviso e destaque da importação', async () => {
+  for (const manual of [false, true]) {
+    const f = await realScreen();
+    if (manual) { button(f.runtime.tree, 'Compras').props.onPress(); f.runtime.render(); }
+    const result = manual ? analysis('partial') : analysis();
+    assert.equal(receiptSection(f.runtime).props.onApply({ ...result, provider: 'backend', isSimulated: false }), true);
+    f.runtime.render();
+    assert.equal(categorySelected(f.runtime, manual ? 'Compras' : 'Lazer'), true);
+    assert.equal(receiptCategoryWarning(f.runtime), undefined); assert.equal(categorySection(f.runtime).props.style, undefined);
+    assert.equal(f.writes.length, 0); f.runtime.unmount();
+  }
+});
+
+test('seleção obsoleta, inativa ou incompatível após importação volta a destacar e bloqueia salvamento', async () => {
+  for (const change of ['inactive', 'removed', 'type']) {
+    const loaded = categories.map(category => ({ ...category, is_default: true }));
+    const f = await realScreen({ categories: loaded });
+    button(f.runtime.tree, 'Lazer').props.onPress(); f.runtime.render();
+    receiptSection(f.runtime).props.onApply({ ...analysis('partial'), provider: 'backend', isSimulated: false }); f.runtime.render();
+    assert.equal(receiptCategoryWarning(f.runtime), undefined);
+    const selected = loaded.find(category => category.name === 'Lazer');
+    if (change === 'inactive') selected.is_active = false;
+    if (change === 'removed') loaded.splice(loaded.indexOf(selected), 1);
+    if (change === 'type') selected.type = 'income';
+    f.runtime.render();
+    assert.equal(text(receiptCategoryWarning(f.runtime)), receiptCategoryMessage);
+    assert.equal(categorySection(f.runtime).props.style.borderWidth, 2);
+    await button(f.runtime.tree, 'Salvar').props.onPress(); f.runtime.render();
+    assert.equal(f.writes.length, 0); assert.equal(f.alerts.at(-1)[0], 'Categoria obrigatória');
+    assert.match(f.alerts.at(-1)[1], /válida e ativa.*tipo/);
+    f.runtime.unmount();
+  }
+});
+
+test('troca de tipo durante conferência exige seleção compatível sem atribuir categoria padrão', async () => {
+  const f = await realScreen();
+  receiptSection(f.runtime).props.onApply({ ...analysis(), provider: 'backend', isSimulated: false }); f.runtime.render();
+  assert.equal(receiptCategoryWarning(f.runtime), undefined);
+  button(f.runtime.tree, '↑ Entrada').props.onPress(); f.runtime.render();
+  assert.equal(text(receiptCategoryWarning(f.runtime)), receiptCategoryMessage);
+  assert.equal(categorySelected(f.runtime, 'Receita'), false);
+  assert.equal(f.writes.length, 0);
+  button(f.runtime.tree, 'Receita').props.onPress(); f.runtime.render();
+  assert.equal(receiptCategoryWarning(f.runtime), undefined); assert.equal(categorySection(f.runtime).props.style, undefined);
+  f.runtime.unmount();
+});
+
+test('fechamento e reabertura limpam pendência e callback antigo não a restaura', async () => {
+  const f = await realScreen(); const stale = receiptSection(f.runtime).props.onApply;
+  stale(analysis('partial')); f.runtime.render(); assert.ok(receiptCategoryWarning(f.runtime));
+  button(f.runtime.tree, 'Cancelar').props.onPress(); f.runtime.render(); openNew(f.runtime);
+  assert.equal(receiptCategoryWarning(f.runtime), undefined); assert.equal(stale(analysis('partial')), false);
+  f.runtime.render(); assert.equal(receiptCategoryWarning(f.runtime), undefined); f.runtime.unmount();
+});
+
+test('rejeição, inconclusão e cancelamento não criam pendência de uma análise não aplicada', async () => {
+  for (const status of ['rejected', 'inconclusive', 'cancelled']) {
+    const f = await realScreen(); const child = importRuntime(receiptSection(f.runtime).props, 'backend-real');
+    const pending = button(child.runtime.tree, 'Escolher arquivo').props.onPress(); await tick(); child.runtime.render();
+    if (status === 'cancelled') button(child.runtime.tree, 'Cancelar análise').props.onPress();
+    child.finish({ provider: 'backend', isSimulated: false, status: 'error', documentStatus: status,
+      message: status === 'rejected' ? 'Documento incompatível.' : 'Análise inconclusiva.' });
+    await pending; child.runtime.render(); f.runtime.render();
+    assert.equal(receiptCategoryWarning(f.runtime), undefined); assert.equal(categorySection(f.runtime).props.style, undefined);
+    assert.equal(f.writes.length, 0); assert.equal(child.applied.length, 0);
+    assert.match(text(child.runtime.tree), status === 'cancelled' ? /Operação cancelada/ : status === 'rejected' ? /Documento incompatível/ : /Análise inconclusiva/);
+    child.runtime.unmount(); f.runtime.unmount();
+  }
+});
+
+test('edição personalizada bloqueia categoria inativa e permite correção válida sem alterar o payload', async () => {
+  const loaded = categories.map(category => ({ ...category, is_active: category.name !== 'Lazer' }));
+  const f = await realScreen({ categories: loaded, openNew: false, transactions: [{
+    id: 'custom-category', description: 'Assinatura', amount: 10, type: 'outcome', category: 'Lazer'
+  }] });
+  find(f.runtime.tree, node => node.type === 'TouchableOpacity' && node.props.key === 'custom-category').props.onPress(); f.runtime.render();
+  await button(f.runtime.tree, 'Salvar').props.onPress(); f.runtime.render();
+  assert.equal(f.updates.length, 0); assert.equal(f.alerts.at(-1)[0], 'Categoria obrigatória');
+  assert.equal(receiptCategoryWarning(f.runtime), undefined);
+  button(f.runtime.tree, 'Alimentação').props.onPress(); f.runtime.render();
+  await button(f.runtime.tree, 'Salvar').props.onPress();
+  assert.equal(f.updates.length, 1);
+  assert.deepEqual(Object.keys(f.updates[0].data).sort(), ['amount', 'category']);
+  assert.equal(f.updates[0].data.category, 'Alimentação'); f.runtime.unmount();
+});
+
+const merchantScreen = () => realScreen({
+  categories: loadTypeScript('src/constants/defaultCategories.ts').defaultCategories.map((category, index) => ({
+    ...category, id: String(index), user_id: 'test-user', is_active: true, is_default: true
+  }))
+});
+
+test('estabelecimentos novos preservam escolha manual e avisos já corrigidos', async () => {
+  const f = await merchantScreen();
+  button(f.runtime.tree, 'Compras').props.onPress(); f.runtime.render();
+  for (const description of ['Drogasil', 'Burger King', 'Carrefour', '99Pop', 'HBO Max']) {
+    changeDescription(f.runtime, description);
+    assert.equal(categorySelected(f.runtime, 'Compras'), true, description);
+    for (const category of ['Saúde', 'Alimentação', 'Transporte', 'Lazer']) {
+      assert.equal(categorySelected(f.runtime, category), false);
+      assert.equal(text(f.runtime.tree).includes(`Categoria sugerida: ${category}.`), false);
+    }
+  }
+  assert.equal(f.categoryReads(), 1);
+  assert.equal(f.writes.length, 0);
+  f.runtime.unmount();
+});
+
+test('estabelecimentos novos mantêm remoção da seleção automática obsoleta e tratamento de conflitos', async () => {
+  const f = await merchantScreen();
+  for (const description of ['d', 'dr', 'drogasi']) {
+    changeDescription(f.runtime, description);
+    assert.equal(categorySelected(f.runtime, 'Saúde'), false);
+  }
+  changeDescription(f.runtime, 'Drogasil');
+  assert.equal(categorySelected(f.runtime, 'Saúde'), true);
+  changeDescription(f.runtime, 'Drogasilina');
+  assert.equal(categorySelected(f.runtime, 'Saúde'), false);
+  changeDescription(f.runtime, 'Burger King');
+  assert.equal(categorySelected(f.runtime, 'Alimentação'), true);
+  changeDescription(f.runtime, 'Burger King e Panvel');
+  assert.equal(categorySelected(f.runtime, 'Alimentação'), false);
+  assert.equal(categorySelected(f.runtime, 'Saúde'), false);
+  assert.match(text(f.runtime.tree), /Mais de uma categoria/);
+  assert.equal(f.categoryReads(), 1);
+  assert.equal(f.writes.length, 0);
+  f.runtime.unmount();
+});
+
+test('estabelecimento em descrição demonstrativa não dispara categorização automática da importação', async () => {
+  for (const provider of ['mock', 'backend']) {
+    const f = await merchantScreen();
+    receiptSection(f.runtime).props.onApply({
+      ...analysis('partial'), provider, fields: { description: 'Drogasil', amount: 50, type: 'outcome' }
+    });
+    f.runtime.render();
+    assert.equal(categorySelected(f.runtime, 'Saúde'), false);
+    assert.equal(text(f.runtime.tree).includes('Categoria sugerida: Saúde.'), false);
+    // Uma edição explícita devolve o controle ao motor para texto informado pelo usuário.
+    changeDescription(f.runtime, 'Drogasil!');
+    assert.equal(categorySelected(f.runtime, 'Saúde'), true);
+    assert.equal(f.categoryReads(), 1);
+    assert.equal(f.writes.length, 0);
+    f.runtime.unmount();
+  }
+});
+
+test('motor real: digitação progressiva de barbearia remove seleção automática intermediária', async () => {
+  const f = await realScreen();
+  for (const [description, selected] of [['b', false], ['ba', false], ['bar', true], ['barb', false], ['barbearia', false]]) {
+    changeDescription(f.runtime, description);
+    assert.equal(categorySelected(f.runtime, 'Lazer'), selected, description);
+  }
+  assert.ok(text(f.runtime.tree).includes(pendingCategoryMessage));
+  assert.equal(f.writes.length, 0);
+  assert.equal(f.categoryReads(), 1);
+  f.runtime.unmount();
+});
+
+test('motor real: colar barbearia não seleciona Lazer', async () => {
+  const f = await realScreen();
+  changeDescription(f.runtime, 'barbearia');
+  assert.equal(categorySelected(f.runtime, 'Lazer'), false);
+  assert.ok(text(f.runtime.tree).includes(pendingCategoryMessage));
+  f.runtime.unmount();
+});
+
+test('motor real: Compras manual permanece durante digitação progressiva e troca para Netflix', async () => {
+  const f = await realScreen();
+  button(f.runtime.tree, 'Compras').props.onPress(); f.runtime.render();
+  for (const description of ['b', 'ba', 'bar', 'barb', 'barbearia', 'Netflix', '']) {
+    changeDescription(f.runtime, description);
+    assert.equal(categorySelected(f.runtime, 'Compras'), true, description);
+    assert.equal(categorySelected(f.runtime, 'Lazer'), false);
+    assert.equal(text(f.runtime.tree).includes('Categoria sugerida: Lazer.'), false);
+  }
+  assert.equal(f.writes.length, 0);
+  f.runtime.unmount();
+});
+
+test('motor real: Usar Compras protege a seleção contra perda de correspondência e outra sugestão', async () => {
+  const f = await realScreen();
+  changeDescription(f.runtime, 'Loja de testes');
+  button(f.runtime.tree, 'Usar Compras').props.onPress(); f.runtime.render();
+  for (const description of ['bar', 'barbearia', 'Netflix', '']) {
+    changeDescription(f.runtime, description);
+    assert.equal(categorySelected(f.runtime, 'Compras'), true, description);
+    assert.equal(categorySelected(f.runtime, 'Lazer'), false);
+  }
+  f.runtime.unmount();
+});
+
+test('motor real: seleção automática acompanha novas sugestões e é removida na ambiguidade', async () => {
+  const f = await realScreen();
+  changeDescription(f.runtime, 'bar');
+  assert.equal(categorySelected(f.runtime, 'Lazer'), true);
+  changeDescription(f.runtime, 'Restaurante');
+  assert.equal(categorySelected(f.runtime, 'Alimentação'), true);
+  assert.equal(categorySelected(f.runtime, 'Lazer'), false);
+  changeDescription(f.runtime, 'Netflix restaurante');
+  assert.equal(categorySelected(f.runtime, 'Alimentação'), false);
+  assert.equal(categorySelected(f.runtime, 'Lazer'), false);
+  assert.match(text(f.runtime.tree), /Mais de uma categoria/);
+  changeDescription(f.runtime, 'Netflix');
+  assert.equal(categorySelected(f.runtime, 'Lazer'), true);
+  assert.equal(f.categoryReads(), 1);
+  f.runtime.unmount();
+});
+
+test('motor real: apagar descrição remove somente a categoria de origem automática', async () => {
+  const f = await realScreen();
+  changeDescription(f.runtime, 'Netflix');
+  assert.equal(categorySelected(f.runtime, 'Lazer'), true);
+  changeDescription(f.runtime, '');
+  assert.equal(categorySelected(f.runtime, 'Lazer'), false);
+  assert.equal(text(f.runtime.tree).includes(pendingCategoryMessage), false);
+  f.runtime.unmount();
+});
+
+test('motor real: sugestão que exige confirmação substitui aviso mas não mantém seleção automática obsoleta', async () => {
+  const f = await realScreen();
+  changeDescription(f.runtime, 'Netflix');
+  changeDescription(f.runtime, 'Loja de testes');
+  assert.equal(categorySelected(f.runtime, 'Lazer'), false);
+  assert.equal(categorySelected(f.runtime, 'Compras'), false);
+  assert.ok(button(f.runtime.tree, 'Usar Compras'));
+  f.runtime.unmount();
+});
+
+test('motor real: cancelar e reabrir não conserva seleção automática nem aceita callback antigo', async () => {
+  const f = await realScreen();
+  changeDescription(f.runtime, 'bar');
+  assert.equal(categorySelected(f.runtime, 'Lazer'), true);
+  const staleApply = receiptSection(f.runtime).props.onApply;
+  button(f.runtime.tree, 'Cancelar').props.onPress(); f.runtime.render();
+  openNew(f.runtime);
+  assert.equal(staleApply(analysis()), false);
+  assert.equal(categorySelected(f.runtime, 'Lazer'), false);
+  changeDescription(f.runtime, 'barbearia');
+  assert.equal(categorySelected(f.runtime, 'Lazer'), false);
+  changeDescription(f.runtime, 'Restaurante');
+  assert.equal(categorySelected(f.runtime, 'Alimentação'), true);
+  assert.equal(f.writes.length, 0);
+  f.runtime.unmount();
+});
+
+test('motor real: categoria aplicada pela importação deixa de pertencer ao efeito automático', async () => {
+  const f = await realScreen();
+  changeDescription(f.runtime, 'bar');
+  receiptSection(f.runtime).props.onApply(analysis()); f.runtime.render();
+  changeDescription(f.runtime, 'barbearia');
+  assert.equal(categorySelected(f.runtime, 'Lazer'), true); // categoria explícita da importação, não da digitação.
+  assert.equal(f.writes.length, 0);
+  f.runtime.unmount();
+});
+
+test('motor real: importação sem categoria preserva o valor anterior e mantém sua origem automática', async () => {
+  const f = await realScreen();
+  changeDescription(f.runtime, 'bar');
+  receiptSection(f.runtime).props.onApply({ ...analysis('partial'), provider: 'backend' }); f.runtime.render();
+  assert.equal(categorySelected(f.runtime, 'Lazer'), true); // campo ausente não apaga a seleção na importação.
+  changeDescription(f.runtime, 'barbearia');
+  assert.equal(categorySelected(f.runtime, 'Lazer'), false);
+  assert.ok(text(f.runtime.tree).includes(pendingCategoryMessage));
+  f.runtime.unmount();
+});
+
+test('motor real: mudança de tipo invalida origem automática e permite sugestão compatível', async () => {
+  const f = await realScreen();
+  changeDescription(f.runtime, 'bar');
+  button(f.runtime.tree, '↑ Entrada').props.onPress(); f.runtime.render();
+  assert.equal(button(f.runtime.tree, 'Lazer'), undefined);
+  assert.equal(categorySelected(f.runtime, 'Receita'), false);
+  changeDescription(f.runtime, 'Salário');
+  assert.equal(categorySelected(f.runtime, 'Receita'), true);
+  f.runtime.unmount();
+});
+
+test('motor real: resposta tardia não substitui sugestão automática da descrição mais recente', async () => {
+  const f = await realScreen();
+  changeDescription(f.runtime, 'bar');
+  const child = importRuntime(receiptSection(f.runtime).props, 'backend-simulated');
+  const pending = button(child.runtime.tree, 'Escolher arquivo').props.onPress(); await tick();
+  changeDescription(f.runtime, 'Restaurante');
+  child.finish({ ...analysis(), provider: 'backend' }); await pending;
+  f.runtime.render(); child.runtime.render();
+  assert.equal(categorySelected(f.runtime, 'Alimentação'), true);
+  assert.equal(categorySelected(f.runtime, 'Lazer'), false);
+  assert.equal(input(f.runtime, 'Ex: Netflix').props.value, 'Restaurante');
+  assert.match(text(child.runtime.tree), /campos foram editados/);
+  assert.equal(f.writes.length, 0);
+  child.runtime.unmount(); f.runtime.unmount();
+});
+
+test('motor real: aviso pendente desaparece com seleção válida e reaparece ao desmarcar', async () => {
+  const f = await realScreen();
+  changeDescription(f.runtime, 'XYZ');
+  assert.ok(text(f.runtime.tree).includes(pendingCategoryMessage));
+  button(f.runtime.tree, 'Compras').props.onPress(); f.runtime.render();
+  assert.equal(categorySelected(f.runtime, 'Compras'), true);
+  assert.equal(text(f.runtime.tree).includes(pendingCategoryMessage), false);
+  button(f.runtime.tree, 'Compras').props.onPress(); f.runtime.render();
+  assert.equal(categorySelected(f.runtime, 'Compras'), false);
+  assert.ok(text(f.runtime.tree).includes(pendingCategoryMessage));
+  assert.equal(f.categoryReads(), 1);
+  assert.equal(f.writes.length, 0);
+  f.runtime.unmount();
+});
+
+test('motor real: cliques agrupados mantêm seleção e desmarcação consistentes', async () => {
+  const f = await realScreen();
+  changeDescription(f.runtime, 'XYZ');
+  const select = button(f.runtime.tree, 'Compras').props.onPress;
+  select(); select(); f.runtime.render();
+  assert.equal(categorySelected(f.runtime, 'Compras'), false);
+  assert.ok(text(f.runtime.tree).includes(pendingCategoryMessage));
+  f.runtime.unmount();
+});
+
+test('motor real: categoria que fica inativa ou ausente na lista não oculta aviso pendente', async () => {
+  for (const state of ['inactive', 'missing']) {
+    const loaded = categories.map(category => ({ ...category, is_default: true }));
+    const f = await realScreen({ categories: loaded });
+    changeDescription(f.runtime, 'XYZ');
+    button(f.runtime.tree, 'Lazer').props.onPress(); f.runtime.render();
+    assert.equal(text(f.runtime.tree).includes(pendingCategoryMessage), false);
+    if (state === 'inactive') loaded.find(category => category.name === 'Lazer').is_active = false;
+    else loaded.splice(loaded.findIndex(category => category.name === 'Lazer'), 1);
+    f.runtime.render();
+    assert.ok(text(f.runtime.tree).includes(pendingCategoryMessage));
+    assert.equal(button(f.runtime.tree, 'Lazer'), undefined);
+    assert.equal(f.categoryReads(), 1);
+    f.runtime.unmount();
+  }
+});
+
+test('motor real: escolha manual resiste à edição da descrição e a recomendações automáticas', async () => {
+  const f = await realScreen();
+  button(f.runtime.tree, 'Compras').props.onPress(); f.runtime.render();
+  for (const description of ['Netflix', 'Restaurante', 'XYZ']) {
+    changeDescription(f.runtime, description);
+    assert.equal(categorySelected(f.runtime, 'Compras'), true);
+    assert.equal(categorySelected(f.runtime, 'Lazer'), false);
+    assert.equal(categorySelected(f.runtime, 'Alimentação'), false);
+    assert.equal(text(f.runtime.tree).includes(pendingCategoryMessage), false);
+  }
+  assert.equal(f.categoryReads(), 1);
+  f.runtime.unmount();
+});
+
+test('motor real: confirmar Usar Compras também é escolha manual protegida', async () => {
+  const f = await realScreen();
+  changeDescription(f.runtime, 'Loja de testes');
+  assert.equal(categorySelected(f.runtime, 'Compras'), false);
+  button(f.runtime.tree, 'Usar Compras').props.onPress(); f.runtime.render();
+  changeDescription(f.runtime, 'Netflix');
+  assert.equal(categorySelected(f.runtime, 'Compras'), true);
+  assert.equal(categorySelected(f.runtime, 'Lazer'), false);
+  f.runtime.unmount();
+});
+
+test('motor real: escolha manual oculta sugestão conflitante sem apagar a sugestão ao desmarcar', async () => {
+  const f = await realScreen();
+  button(f.runtime.tree, 'Compras').props.onPress(); f.runtime.render();
+  changeDescription(f.runtime, 'Netflix');
+  assert.equal(categorySelected(f.runtime, 'Compras'), true);
+  assert.equal(categorySelected(f.runtime, 'Lazer'), false);
+  assert.equal(text(f.runtime.tree).includes('Categoria sugerida: Lazer.'), false);
+  button(f.runtime.tree, 'Compras').props.onPress(); f.runtime.render();
+  assert.equal(categorySelected(f.runtime, 'Compras'), false);
+  assert.ok(text(f.runtime.tree).includes('Categoria sugerida: Lazer.'));
+  assert.equal(f.categoryReads(), 1);
+  assert.equal(f.writes.length, 0);
+  f.runtime.unmount();
+});
+
+test('motor real: sem escolha manual mantém mensagem automática e opção Usar quando aplicável', async () => {
+  const f = await realScreen();
+  changeDescription(f.runtime, 'Netflix');
+  assert.equal(categorySelected(f.runtime, 'Lazer'), true);
+  assert.ok(text(f.runtime.tree).includes('Categoria sugerida: Lazer.'));
+  changeDescription(f.runtime, 'Loja de testes');
+  assert.ok(button(f.runtime.tree, 'Usar Compras'));
+  // Escolher Compras manualmente oculta a recomendação; desmarcar a revela novamente.
+  button(f.runtime.tree, 'Compras').props.onPress(); f.runtime.render();
+  assert.equal(button(f.runtime.tree, 'Usar Compras'), undefined);
+  button(f.runtime.tree, 'Compras').props.onPress(); f.runtime.render();
+  assert.ok(button(f.runtime.tree, 'Usar Compras'));
+  button(f.runtime.tree, 'Usar Compras').props.onPress(); f.runtime.render();
+  assert.equal(categorySelected(f.runtime, 'Compras'), true);
+  assert.equal(button(f.runtime.tree, 'Usar Compras'), undefined);
+  f.runtime.unmount();
+});
+
+test('motor real: seleção manual inativa, ausente ou incompatível não esconde sugestões', async () => {
+  for (const state of ['inactive', 'missing', 'incompatible']) {
+    const loaded = [...categories.map(category => ({ ...category, is_default: true })),
+      { name: 'Compras', type: 'outcome', is_active: true, is_default: true, color: '#444444' }];
+    const f = await realScreen({ categories: loaded });
+    button(f.runtime.tree, 'Compras').props.onPress(); f.runtime.render();
+    changeDescription(f.runtime, 'Netflix');
+    assert.equal(text(f.runtime.tree).includes('Categoria sugerida: Lazer.'), false);
+    const manualCategory = loaded.find(category => category.name === 'Compras');
+    if (state === 'inactive') manualCategory.is_active = false;
+    else if (state === 'missing') loaded.splice(loaded.indexOf(manualCategory), 1);
+    else manualCategory.type = 'income';
+    f.runtime.render();
+    assert.ok(text(f.runtime.tree).includes('Categoria sugerida: Lazer.'));
+    assert.equal(f.categoryReads(), 1);
+    assert.equal(f.writes.length, 0);
+    f.runtime.unmount();
+  }
+});
+
+test('motor real: importação posterior não substitui categoria manual por categoria do mock ou backend', async () => {
+  for (const provider of ['mock', 'backend']) {
+    const f = await realScreen();
+    const apply = receiptSection(f.runtime).props.onApply;
+    button(f.runtime.tree, 'Compras').props.onPress();
+    // Exercita a ref de escolha manual antes da próxima renderização do formulário.
+    assert.equal(apply({ ...analysis(), provider }), true);
+    f.runtime.render();
+    assert.equal(categorySelected(f.runtime, 'Compras'), true);
+    assert.equal(categorySelected(f.runtime, 'Lazer'), false);
+    assert.equal(input(f.runtime, '0,00').props.value, '129,90');
+    assert.equal(f.writes.length, 0);
+    f.runtime.unmount();
+  }
+});
+
+test('motor real: categoria escolhida durante a espera invalida resposta atrasada', async () => {
+  const f = await realScreen();
+  const child = importRuntime(receiptSection(f.runtime).props, 'backend-simulated');
+  const pending = button(child.runtime.tree, 'Escolher arquivo').props.onPress();
+  await tick();
+  button(f.runtime.tree, 'Compras').props.onPress();
+  child.finish({ ...analysis(), provider: 'backend' }); await pending;
+  f.runtime.render(); child.runtime.render();
+  assert.equal(categorySelected(f.runtime, 'Compras'), true);
+  assert.equal(input(f.runtime, 'Ex: Netflix').props.value, '');
+  assert.match(text(child.runtime.tree), /campos foram editados/);
+  assert.equal(f.writes.length, 0);
+  child.runtime.unmount(); f.runtime.unmount();
+});
+
+test('motor real: mudar tipo limpa escolha incompatível sem selecionar outra ou restaurar a antiga', async () => {
+  const f = await realScreen();
+  changeDescription(f.runtime, 'XYZ');
+  button(f.runtime.tree, 'Compras').props.onPress(); f.runtime.render();
+  button(f.runtime.tree, '↑ Entrada').props.onPress(); f.runtime.render();
+  assert.equal(button(f.runtime.tree, 'Compras'), undefined);
+  assert.equal(categorySelected(f.runtime, 'Receita'), false);
+  assert.ok(text(f.runtime.tree).includes(pendingCategoryMessage));
+  changeDescription(f.runtime, 'Salário');
+  assert.equal(categorySelected(f.runtime, 'Receita'), false);
+  button(f.runtime.tree, 'Receita').props.onPress(); f.runtime.render();
+  assert.equal(categorySelected(f.runtime, 'Receita'), true);
+  button(f.runtime.tree, '↓ Saída').props.onPress(); f.runtime.render();
+  assert.equal(categorySelected(f.runtime, 'Compras'), false);
+  assert.equal(categorySelected(f.runtime, 'Lazer'), false);
+  f.runtime.unmount();
+});
+
+test('motor real: tipo recebido na importação limpa manual incompatível e exige nova seleção', async () => {
+  const f = await realScreen();
+  button(f.runtime.tree, 'Compras').props.onPress(); f.runtime.render();
+  receiptSection(f.runtime).props.onApply({ ...analysis(), fields: { ...analysis().fields, type: 'income', category: 'Receita' } });
+  f.runtime.render();
+  assert.equal(categorySelected(f.runtime, 'Receita'), false);
+  assert.equal(button(f.runtime.tree, 'Compras'), undefined);
+  await button(f.runtime.tree, 'Salvar').props.onPress();
+  assert.equal(f.alerts.at(-1)[0], 'Categoria obrigatória');
+  assert.equal(f.writes.length, 0);
+  f.runtime.unmount();
+});
+
+test('motor real: cancelar e reabrir limpa proteção manual e continua rejeitando callback da sessão anterior', async () => {
+  const f = await realScreen();
+  button(f.runtime.tree, 'Compras').props.onPress(); f.runtime.render();
+  const staleApply = receiptSection(f.runtime).props.onApply;
+  button(f.runtime.tree, 'Cancelar').props.onPress(); f.runtime.render();
+  openNew(f.runtime);
+  assert.equal(staleApply(analysis()), false);
+  changeDescription(f.runtime, 'Netflix');
+  assert.equal(categorySelected(f.runtime, 'Lazer'), true);
+  assert.equal(categorySelected(f.runtime, 'Compras'), false);
+  assert.equal(f.categoryReads(), 1);
+  f.runtime.unmount();
+});
+
+test('motor real: salvar mantém payload anterior e nova sessão não herda proteção manual', async () => {
+  const f = await realScreen();
+  button(f.runtime.tree, 'Compras').props.onPress(); f.runtime.render();
+  changeDescription(f.runtime, 'Netflix');
+  input(f.runtime, '0,00').props.onChangeText('1000'); f.runtime.render();
+  assert.equal(f.writes.length, 0);
+  const pending = button(f.runtime.tree, 'Salvar').props.onPress();
+  assert.equal(f.writes[0].data.category, 'Compras');
+  assert.deepEqual(Object.keys(f.writes[0].data).sort(), ['amount', 'category', 'description', 'type']);
+  f.releaseSave(); await pending; await tick(); f.runtime.render();
+  openNew(f.runtime); changeDescription(f.runtime, 'Restaurante');
+  assert.equal(categorySelected(f.runtime, 'Alimentação'), true);
+  f.runtime.unmount();
+});
+
+test('motor real: sem intervenção manual a seleção automática anterior continua funcionando', async () => {
+  const f = await realScreen();
+  changeDescription(f.runtime, 'Restaurante');
+  assert.equal(categorySelected(f.runtime, 'Alimentação'), true);
+  changeDescription(f.runtime, 'Netflix');
+  assert.equal(categorySelected(f.runtime, 'Lazer'), true);
+  assert.equal(categorySelected(f.runtime, 'Alimentação'), false);
+  f.runtime.unmount();
+});
+
+test('motor real: importação fictícia mantém bloqueio automático e aviso parcial independente da seleção', async () => {
+  const f = await realScreen();
+  const child = importRuntime(receiptSection(f.runtime).props, 'backend-simulated');
+  const pending = button(child.runtime.tree, 'Escolher arquivo').props.onPress(); await tick();
+  child.finish({ ...analysis('partial'), provider: 'backend', fields: { description: 'Netflix', amount: 50 } });
+  await pending; f.runtime.render(); child.runtime.render();
+  assert.equal(categorySelected(f.runtime, 'Lazer'), false); // o motor real sugeriria Lazer para esse texto.
+  assert.match(text(child.runtime.tree), /Leitura parcial simulada/);
+  changeDescription(f.runtime, 'XYZ');
+  assert.ok(text(f.runtime.tree).includes(pendingCategoryMessage));
+  button(f.runtime.tree, 'Compras').props.onPress(); f.runtime.render();
+  assert.equal(text(f.runtime.tree).includes(pendingCategoryMessage), false);
+  child.runtime.render(receiptSection(f.runtime).props);
+  assert.match(text(child.runtime.tree), /Leitura parcial simulada/);
+  assert.equal(f.categoryReads(), 1);
+  assert.equal(f.writes.length, 0);
+  child.runtime.unmount(); f.runtime.unmount();
+});
+
+test('motor real: cancelar análise preserva escolha manual do formulário ainda aberto', async () => {
+  const f = await realScreen();
+  button(f.runtime.tree, 'Compras').props.onPress(); f.runtime.render();
+  const child = importRuntime(receiptSection(f.runtime).props);
+  const pending = button(child.runtime.tree, 'Escolher arquivo').props.onPress(); await tick(); child.runtime.render();
+  button(child.runtime.tree, 'Cancelar análise').props.onPress();
+  child.finish(analysis()); await pending; f.runtime.render();
+  changeDescription(f.runtime, 'Netflix');
+  assert.equal(categorySelected(f.runtime, 'Compras'), true);
+  assert.equal(f.writes.length, 0);
+  child.runtime.unmount(); f.runtime.unmount();
+});
+
+test('edições manuais durante análise preservam descrição, valor, tipo e categoria sem persistir', async () => {
+  for (const edit of ['description', 'amount', 'type', 'category']) {
+    const screen = await screenRuntime();
+    const section = find(screen.runtime.tree, node => node.type === 'ReceiptImportSection');
+    const child = importRuntime(section.props);
+    const pending = button(child.runtime.tree, 'Escolher arquivo').props.onPress();
+    await tick(); child.runtime.render();
+    const before = section.props.getFormRevision();
+    if (edit === 'description') input(screen.runtime, 'Ex: Netflix').props.onChangeText('Correção manual');
+    if (edit === 'amount') input(screen.runtime, '0,00').props.onChangeText('9900');
+    if (edit === 'type') button(screen.runtime.tree, '↑ Entrada').props.onPress();
+    if (edit === 'category') button(screen.runtime.tree, 'Lazer').props.onPress();
+    // A ref invalida o resultado mesmo antes de uma nova renderização.
+    assert.ok(section.props.getFormRevision() > before);
+    child.finish({ ...analysis(), provider: 'backend' });
+    await pending;
+    child.runtime.render(); screen.runtime.render();
+    assert.match(text(child.runtime.tree), /campos foram editados/);
+    assert.equal(input(screen.runtime, 'Ex: Netflix').props.value, edit === 'description' ? 'Correção manual' : '');
+    assert.equal(input(screen.runtime, '0,00').props.value, edit === 'amount' ? '99,00' : '');
+    assert.equal(screen.writes.length, 0);
+    child.runtime.unmount(); screen.runtime.unmount();
+  }
+});
+
+test('nova importação após cancelar invalida a antiga e aplica apenas a resposta atual', async () => {
+  const f = importRuntime();
+  const first = button(f.runtime.tree, 'Escolher arquivo').props.onPress();
+  await tick(); f.runtime.render();
+  button(f.runtime.tree, 'Cancelar análise').props.onPress();
+  f.runtime.render();
+  const second = button(f.runtime.tree, 'Escolher arquivo').props.onPress();
+  await tick();
+  f.finish({ ...analysis(), fields: { ...analysis().fields, description: 'Resposta antiga' } }, 0);
+  await first;
+  assert.equal(f.applied.length, 0);
+  f.finish({ ...analysis(), fields: { ...analysis().fields, description: 'Resposta atual' } }, 1);
+  await second;
+  assert.equal(f.applied.length, 1);
+  assert.equal(f.applied[0].fields.description, 'Resposta atual');
+  f.runtime.unmount();
+});
+
+test('resposta do backend sem categoria preserva seleção compatível e continua exigindo Salvar', async () => {
+  const f = await screenRuntime();
+  input(f.runtime, 'Ex: Netflix').props.onChangeText('Descrição anterior');
+  f.runtime.render();
+  button(f.runtime.tree, 'Lazer').props.onPress();
+  f.runtime.render();
+  const result = { provider: 'backend', isSimulated: true, status: 'partial', message: 'Dados demonstrativos.',
+    fields: { description: 'SIMULAÇÃO — compra', amount: 129.9, type: 'outcome', identifiedDate: '2020-01-01' } };
+  find(f.runtime.tree, node => node.type === 'ReceiptImportSection').props.onApply(result);
+  f.runtime.render();
+  assert.equal(input(f.runtime, 'Ex: Netflix').props.value, result.fields.description);
+  assert.equal(input(f.runtime, '0,00').props.value, '129,90');
+  assert.equal(button(f.runtime.tree, 'Lazer').props.style[1].backgroundColor, '#333333');
+  assert.equal(f.writes.length, 0);
+  const pending = button(f.runtime.tree, 'Salvar').props.onPress();
+  assert.equal(f.writes.length, 1);
+  assert.deepEqual(Object.keys(f.writes[0].data).sort(), ['amount', 'category', 'description', 'type']);
+  assert.equal(f.writes[0].data.category, 'Lazer');
+  f.releaseSave(); await pending;
+  f.runtime.unmount();
+});
+
+test('fechar formulário durante análise impede aplicação mesmo com resposta backend tardia', async () => {
+  const screen = await screenRuntime();
+  const section = find(screen.runtime.tree, node => node.type === 'ReceiptImportSection');
+  const child = importRuntime(section.props);
+  const pending = button(child.runtime.tree, 'Escolher arquivo').props.onPress();
+  await tick();
+  button(screen.runtime.tree, 'Cancelar').props.onPress();
+  child.finish({ ...analysis(), provider: 'backend' });
+  await pending;
+  screen.runtime.render();
+  assert.equal(input(screen.runtime, 'Ex: Netflix').props.value, '');
+  assert.equal(screen.writes.length, 0);
+  child.runtime.unmount(); screen.runtime.unmount();
+});
+
+test('aviso diferencia envio ao servidor de mock local sem controles técnicos adicionais', () => {
+  const backend = importRuntime({}, 'backend-simulated');
+  assert.match(text(backend.runtime.tree), /enviado ao servidor FinanceIQ/);
+  assert.equal(text(backend.runtime.tree).includes('Nenhum documento será enviado'), false);
+  backend.runtime.unmount();
+  const mock = importRuntime({}, 'mock');
+  assert.match(text(mock.runtime.tree), /Nenhum documento será enviado a serviços externos/);
+  mock.runtime.unmount();
+});
+
+test('respostas reais completas e parciais preenchem para revisão, preservam categoria manual e só Salvar persiste', async () => {
+  for (const status of ['success', 'partial']) {
+    const screen = await realScreen();
+    button(screen.runtime.tree, 'Compras').props.onPress(); screen.runtime.render();
+    const child = importRuntime(receiptSection(screen.runtime).props, 'backend-real');
+    assert.match(text(child.runtime.tree), /servidor FinanceIQ e à OpenAI/);
+    const pending = button(child.runtime.tree, 'Escolher arquivo').props.onPress(); await tick(); child.runtime.render();
+    assert.ok(find(child.runtime.tree, node => node.type === 'ActivityIndicator'));
+    assert.equal(text(child.runtime.tree).includes('Análise simulada'), false);
+    assert.equal(find(child.runtime.tree, node => node.type === 'ActivityIndicator').props.accessibilityLabel, 'Analisando nota fiscal');
+    const result = { provider: 'backend', isSimulated: false, status, documentStatus: status,
+      message: status === 'partial' ? 'Leitura parcial do documento. Revise os campos reconhecidos.' : 'Dados reconhecidos no documento. Confira os campos.',
+      fields: { description: 'Compra no mercado', amount: 24.9, type: 'outcome', identifiedDate: '2026-10-14',
+        ...(status === 'success' ? { category: 'Alimentação' } : {}) } };
+    child.finish(result); await pending; child.runtime.render(); screen.runtime.render();
+    assert.equal(input(screen.runtime, 'Ex: Netflix').props.value, 'Compra no mercado');
+    assert.equal(input(screen.runtime, '0,00').props.value, '24,90');
+    assert.equal(categorySelected(screen.runtime, 'Compras'), true);
+    assert.equal(text(child.runtime.tree).includes('simulad'), false);
+    assert.match(text(child.runtime.tree), /14\/10\/2026/); assert.match(text(child.runtime.tree), /data do lançamento foi preservada/);
+    assert.equal(screen.writes.length, 0);
+    button(child.runtime.tree, 'Voltar ao formulário').props.onPress(); child.runtime.render();
+    input(screen.runtime, '0,00').props.onChangeText('2590'); screen.runtime.render();
+    const save = button(screen.runtime.tree, 'Salvar').props.onPress();
+    assert.equal(screen.writes.length, 1); assert.equal(screen.writes[0].data.amount, 25.9);
+    assert.equal(screen.writes[0].data.category, 'Compras');
+    assert.deepEqual(Object.keys(screen.writes[0].data).sort(), ['amount', 'category', 'description', 'type']);
+    screen.releaseSave(); await save;
+    child.runtime.unmount(); screen.runtime.unmount();
+  }
+});
+
+test('rejeição, inconclusão e erro reais são distintos e preservam todo o formulário', async () => {
+  for (const documentStatus of ['rejected', 'inconclusive', undefined]) {
+    const screen = await realScreen();
+    changeDescription(screen.runtime, 'Descrição manual');
+    input(screen.runtime, '0,00').props.onChangeText('1234'); screen.runtime.render();
+    button(screen.runtime.tree, 'Compras').props.onPress(); screen.runtime.render();
+    const child = importRuntime(receiptSection(screen.runtime).props, 'backend-real');
+    const pending = button(child.runtime.tree, 'Escolher arquivo').props.onPress(); await tick();
+    const message = documentStatus === 'rejected' ? 'Documento incompatível.' : documentStatus === 'inconclusive' ? 'Análise inconclusiva.' : 'Serviço de análise indisponível.';
+    child.finish({ provider: 'backend', isSimulated: false, status: 'error', documentStatus, message });
+    await pending; child.runtime.render(); screen.runtime.render();
+    assert.match(text(child.runtime.tree), new RegExp(message));
+    assert.equal(child.applied.length, 0); assert.equal(screen.writes.length, 0);
+    assert.equal(input(screen.runtime, 'Ex: Netflix').props.value, 'Descrição manual');
+    assert.equal(input(screen.runtime, '0,00').props.value, '12,34'); assert.equal(categorySelected(screen.runtime, 'Compras'), true);
+    button(child.runtime.tree, 'Voltar ao formulário').props.onPress(); child.runtime.render();
+    // O aviso permanece junto ao formulário mesmo com o seletor fechado.
+    assert.equal(find(child.runtime.tree, node => node.type === 'Modal').props.visible, false);
+    assert.match(text(child.runtime.tree), new RegExp(message));
+    child.runtime.unmount(); screen.runtime.unmount();
+  }
+});
+
+test('análise real tardia não sobrescreve edição, fechamento ou cancelamento', async () => {
+  for (const action of ['edit', 'close', 'cancel', 'blur']) {
+    const screen = await realScreen(); const child = importRuntime(receiptSection(screen.runtime).props, 'backend-real');
+    const pending = button(child.runtime.tree, 'Escolher arquivo').props.onPress(); await tick(); child.runtime.render();
+    if (action === 'edit') changeDescription(screen.runtime, 'Correção manual');
+    if (action === 'close') button(screen.runtime.tree, 'Cancelar').props.onPress();
+    if (action === 'cancel') button(child.runtime.tree, 'Cancelar análise').props.onPress();
+    if (action === 'blur') child.blur();
+    child.finish({ ...analysis(), provider: 'backend', isSimulated: false }); await pending;
+    child.runtime.render(); screen.runtime.render();
+    assert.equal(input(screen.runtime, 'Ex: Netflix').props.value, action === 'edit' ? 'Correção manual' : '');
+    assert.equal(screen.writes.length, 0);
+    child.runtime.unmount(); screen.runtime.unmount();
+  }
+});
+
+test('tipo real incompatível invalida categoria manual sem escolher categoria inexistente ou inativa', async () => {
+  const screen = await realScreen();
+  button(screen.runtime.tree, 'Compras').props.onPress(); screen.runtime.render();
+  receiptSection(screen.runtime).props.onApply({ provider: 'backend', isSimulated: false, status: 'partial',
+    message: 'Leitura parcial.', fields: { description: 'Recebimento', amount: 24.9, type: 'income', category: 'Inventada' } });
+  screen.runtime.render();
+  assert.equal(categorySelected(screen.runtime, 'Compras'), false); assert.equal(categorySelected(screen.runtime, 'Receita'), false);
+  assert.equal(screen.writes.length, 0);
+  await button(screen.runtime.tree, 'Salvar').props.onPress(); assert.equal(screen.writes.length, 0);
+  screen.runtime.unmount();
+});
 
 test('mostra loading e aplica resultado somente após conclusão', async () => {
   const { runtime, applied, finish } = importRuntime();
@@ -193,6 +971,8 @@ test('mostra loading e aplica resultado somente após conclusão', async () => {
   runtime.render();
   assert.equal(applied.length, 1);
   assert.match(text(runtime.tree), /Dados simulados preenchidos/);
+  assert.match(text(runtime.tree), /Data demonstrativa/);
+  assert.equal(text(runtime.tree).includes('Data identificada no documento'), false);
   runtime.unmount();
 });
 

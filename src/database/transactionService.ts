@@ -498,7 +498,8 @@ export const transactionService = {
     }
 
     return {
-      importedCount
+      importedCount,
+      skippedCount: transactions.length - importedCount
     };
   },
 
@@ -535,6 +536,8 @@ export const transactionService = {
     });
 
     await Promise.all(deletePromises);
+
+    return { removedCount: deletePromises.length };
   },
 
   // =========================

@@ -46,9 +46,15 @@ export default function Lancamentos() {
   // =========================
   const [modalVisible, setModalVisible] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [hasReceiptToReview, setHasReceiptToReview] = useState(false);
   const savingRef = useRef(false);
   const receiptFormOpenRef = useRef(false);
   const receiptFormSessionRef = useRef(0);
+  const receiptFormRevisionRef = useRef(0);
+  // null: sem escolha manual; '': seleção manual desmarcada ou incompatível.
+  // Depois de intervir, o usuário mantém o controle até uma nova sessão.
+  const manualCategoryRef = useRef<string | null>(null);
+  const automaticCategoryRef = useRef<string | null>(null);
   const receiptFormSession = receiptFormSessionRef.current;
   const receiptCategoryOverrideRef = useRef<{
     description: string;
@@ -162,10 +168,23 @@ export default function Lancamentos() {
     );
   };
 
+  const isValidCategorySelection = (
+    categoryName: string,
+    categoryType: Transaction['type']
+  ) => !!categoryName.trim() && availableCategories.some(category =>
+    category.is_active && category.type === categoryType && category.name === categoryName
+  );
+  const hasValidSelectedCategory = isValidCategorySelection(selectedCategoryName, type);
+  const hasValidManualCategory = hasValidSelectedCategory && manualCategoryRef.current === selectedCategoryName;
+  const receiptCategoryPending = hasReceiptToReview && !editingTransaction && !hasValidSelectedCategory;
+
   const handleChangeType = (
     selectedType: 'income' | 'outcome'
   ) => {
+    receiptFormRevisionRef.current += 1;
     receiptCategoryOverrideRef.current = null;
+    automaticCategoryRef.current = null;
+    if (manualCategoryRef.current !== null) manualCategoryRef.current = '';
     setType(selectedType);
 
     setSelectedCategoryName('');
@@ -174,7 +193,10 @@ export default function Lancamentos() {
   };
 
   const applySuggestedCategory = () => {
-    if (categorySuggestion?.category) {
+    if (categorySuggestion?.category && isValidCategorySelection(categorySuggestion.category.name, type)) {
+      receiptFormRevisionRef.current += 1;
+      manualCategoryRef.current = categorySuggestion.category.name;
+      automaticCategoryRef.current = null;
       setSelectedCategoryName(
         categorySuggestion.category.name
       );
@@ -220,14 +242,13 @@ export default function Lancamentos() {
   };
   
   const handleSelectCategory = (categoryName: string) => {
-  setSelectedCategoryName((currentCategory) => {
-    if (currentCategory === categoryName) {
-      return '';
-    }
-
-    return categoryName;
-  });
-};
+    receiptFormRevisionRef.current += 1;
+    const currentCategoryName = manualCategoryRef.current ?? selectedCategoryName;
+    const nextCategoryName = currentCategoryName === categoryName ? '' : categoryName;
+    manualCategoryRef.current = nextCategoryName;
+    automaticCategoryRef.current = null;
+    setSelectedCategoryName(nextCategoryName);
+  };
 
   // =========================
   // CARREGAR DADOS
@@ -270,6 +291,13 @@ export default function Lancamentos() {
     );
     if (Object.keys(patch).length === 0) return false;
 
+    if (manualCategoryRef.current !== null) {
+      const manualCategory = manualCategoryRef.current;
+      patch.category = isValidCategorySelection(manualCategory, patch.type ?? type) ? manualCategory : '';
+      // Não restaurar uma escolha que ficou incompatível após mudar o tipo.
+      manualCategoryRef.current = patch.category;
+    }
+
     // A sugestão automática não deve substituir a categoria durante a importação.
     // Uma edição manual da descrição ou tipo devolve o controle ao efeito original.
     receiptCategoryOverrideRef.current = {
@@ -279,8 +307,12 @@ export default function Lancamentos() {
     if (patch.description !== undefined) setDescription(patch.description);
     if (patch.amount !== undefined) setAmount(floatToMoney(patch.amount));
     if (patch.type !== undefined) setType(patch.type);
-    if (patch.category !== undefined) setSelectedCategoryName(patch.category);
+    if (patch.category !== undefined) {
+      automaticCategoryRef.current = null;
+      setSelectedCategoryName(patch.category);
+    }
     setCategorySuggestion(null);
+    setHasReceiptToReview(true);
     return true;
   };
 
@@ -297,7 +329,8 @@ export default function Lancamentos() {
   // EFFECT: SUGESTÃO DE CATEGORIA
   // =========================
   useEffect(() => {
-    if (editingTransaction) {
+    if (editingTransaction || !modalVisible || !receiptFormOpenRef.current ||
+      receiptFormSession !== receiptFormSessionRef.current) {
       return;
     }
 
@@ -314,19 +347,35 @@ export default function Lancamentos() {
 
     setCategorySuggestion(suggestion);
 
+    const canApplyAutomaticCategory = () => manualCategoryRef.current === null &&
+      receiptFormOpenRef.current && receiptFormSession === receiptFormSessionRef.current;
+    if (!canApplyAutomaticCategory()) return;
+
     if (
       suggestion?.category &&
-      suggestion.shouldAutoSelect
+      suggestion.shouldAutoSelect &&
+      isValidCategorySelection(suggestion.category.name, type)
     ) {
-      setSelectedCategoryName(
-        suggestion.category.name
-      );
+      const categoryName = suggestion.category.name;
+      automaticCategoryRef.current = categoryName;
+      setSelectedCategoryName(current => canApplyAutomaticCategory() && automaticCategoryRef.current === categoryName
+        ? categoryName : current);
+    } else {
+      const previousAutomaticCategory = automaticCategoryRef.current;
+      automaticCategoryRef.current = null;
+      if (previousAutomaticCategory !== null) {
+        // Limpar apenas a seleção que este efeito aplicou; preservar escolhas manuais/importadas.
+        setSelectedCategoryName(current => canApplyAutomaticCategory() && automaticCategoryRef.current === null &&
+          current === previousAutomaticCategory ? '' : current);
+      }
     }
   }, [
     description,
     type,
     availableCategories,
-    editingTransaction
+    editingTransaction,
+    modalVisible,
+    receiptFormSession
   ]);
 
   // =========================
@@ -365,10 +414,13 @@ export default function Lancamentos() {
       receiptFormOpenRef.current = false;
       receiptFormSessionRef.current += 1;
       receiptCategoryOverrideRef.current = null;
+      manualCategoryRef.current = null;
+      automaticCategoryRef.current = null;
       const fixedTransaction =
         isFixedTransaction(transaction);
 
       setEditingTransaction(transaction);
+      setHasReceiptToReview(false);
 
       setDescription(
         transaction.description
@@ -502,10 +554,10 @@ const handleSave = async () => {
           amountToSave
         );
       } else {
-        if (!selectedCategoryName) {
+        if (!isValidCategorySelection(selectedCategoryName, type)) {
           Alert.alert(
             'Categoria obrigatória',
-            'Selecione uma categoria antes de salvar o lançamento.'
+            'Selecione uma categoria válida e ativa para este tipo de lançamento antes de salvar.'
           );
 
           return;
@@ -520,10 +572,10 @@ const handleSave = async () => {
         );
       }
     } else {
-      if (!selectedCategoryName) {
+      if (!isValidCategorySelection(selectedCategoryName, type)) {
         Alert.alert(
           'Categoria obrigatória',
-          'Selecione uma categoria antes de salvar o lançamento.'
+          'Selecione uma categoria válida e ativa para este tipo de lançamento antes de salvar.'
         );
 
         return;
@@ -555,9 +607,12 @@ const handleSave = async () => {
     setEditMode('replace');
 
     setModalVisible(false);
+    setHasReceiptToReview(false);
     receiptFormOpenRef.current = false;
     receiptFormSessionRef.current += 1;
     receiptCategoryOverrideRef.current = null;
+    manualCategoryRef.current = null;
+    automaticCategoryRef.current = null;
 
     loadData();
 
@@ -582,9 +637,12 @@ const handleSave = async () => {
   // FECHAR MODAL
   // =========================
   const closeModal = () => {
+    setHasReceiptToReview(false);
     receiptFormOpenRef.current = false;
     receiptFormSessionRef.current += 1;
     receiptCategoryOverrideRef.current = null;
+    manualCategoryRef.current = null;
+    automaticCategoryRef.current = null;
 
     setModalVisible(false);
 
@@ -694,8 +752,11 @@ const handleSave = async () => {
             receiptFormOpenRef.current = true;
             receiptFormSessionRef.current += 1;
             receiptCategoryOverrideRef.current = null;
+            manualCategoryRef.current = null;
+            automaticCategoryRef.current = null;
 
             setEditingTransaction(null);
+            setHasReceiptToReview(false);
 
             setDescription('');
 
@@ -880,6 +941,7 @@ const handleSave = async () => {
                   <ReceiptImportSection
                     categories={availableCategories}
                     onApply={applyReceiptAnalysis}
+                    getFormRevision={() => receiptFormRevisionRef.current}
                     disabled={isSaving}
                   />
                 )}
@@ -1047,6 +1109,7 @@ const handleSave = async () => {
   keyboardType="numeric"
   value={amount}
   onChangeText={(text) => {
+    receiptFormRevisionRef.current += 1;
     const formatted = formatMoney(text);
     setAmount(formatted);
   }}
@@ -1067,13 +1130,16 @@ const handleSave = async () => {
                       placeholder="Ex: Netflix"
                       value={description}
                       onChangeText={(text) => {
+                        receiptFormRevisionRef.current += 1;
                         receiptCategoryOverrideRef.current = null;
                         setDescription(text);
                       }}
                     />
 
                     {categorySuggestion &&
-                      description.trim() !== '' && (
+                      description.trim() !== '' &&
+                      !hasValidManualCategory &&
+                      (categorySuggestion.category || !hasValidSelectedCategory) && (
 
                         <View style={styles.suggestionBox}>
 
@@ -1124,10 +1190,23 @@ const handleSave = async () => {
                 {(!editingTransaction ||
                   !isFixedTransaction(editingTransaction)) && (
 
-                  <>
+                  <View
+                    testID="transaction-category-section"
+                    style={receiptCategoryPending ? styles.categorySectionPending : undefined}
+                  >
                     <Text style={styles.inputLabel}>
                       Categoria
                     </Text>
+
+                    {receiptCategoryPending && (
+                      <Text
+                        testID="receipt-category-warning"
+                        style={styles.categoryPendingMessage}
+                        accessibilityLiveRegion="polite"
+                      >
+                        Não foi possível identificar automaticamente uma categoria para este lançamento. Selecione uma categoria antes de salvar.
+                      </Text>
+                    )}
 
                     <ScrollView
                       horizontal
@@ -1181,7 +1260,7 @@ const handleSave = async () => {
                       })}
 
                     </ScrollView>
-                  </>
+                  </View>
                 )}
 
                 {/* FOOTER */}
@@ -1437,6 +1516,21 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontSize: 12,
     fontWeight: 'bold'
+  },
+
+  categorySectionPending: {
+    borderWidth: 2,
+    borderColor: '#B45309',
+    backgroundColor: '#FFFBEB',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 16
+  },
+
+  categoryPendingMessage: {
+    color: '#92400E',
+    fontSize: 13,
+    marginBottom: 12
   },
 
   categoryScroll: {
