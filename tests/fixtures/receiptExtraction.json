@@ -1,0 +1,17 @@
+{
+  "schemaVersion": "1",
+  "document": {
+    "classification": "nfce",
+    "certainty": "clear",
+    "readability": "readable",
+    "multipleDocuments": false
+  },
+  "fields": {
+    "merchant": { "value": "Mercado de Teste", "certainty": "clear" },
+    "description": { "value": "Compra em Mercado de Teste", "certainty": "clear" },
+    "amount": { "valueCents": 12990, "currency": "BRL", "certainty": "clear" },
+    "type": { "value": "outcome", "certainty": "clear" },
+    "category": { "value": " alimentação ", "certainty": "clear" },
+    "identifiedDate": { "value": "2026-09-15", "certainty": "clear" }
+  }
+}
