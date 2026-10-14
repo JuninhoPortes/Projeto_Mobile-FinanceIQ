@@ -10,6 +10,7 @@ export interface ReceiptUploadConfig {
   globalConcurrency: number;
   uploadTimeoutMs: number;
   validationTimeoutMs: number;
+  processingTimeoutMs: number;
 }
 
 export function receiptUploadConfig(env: NodeJS.ProcessEnv): ReceiptUploadConfig {
@@ -32,7 +33,8 @@ export function receiptUploadConfig(env: NodeJS.ProcessEnv): ReceiptUploadConfig
     perDay: integer('RECEIPT_REQUESTS_PER_DAY', 30, 10000),
     globalConcurrency: integer('RECEIPT_GLOBAL_CONCURRENCY', 4, 4),
     uploadTimeoutMs: integer('RECEIPT_UPLOAD_TIMEOUT_MS', 20000, 60000),
-    validationTimeoutMs: integer('RECEIPT_VALIDATION_TIMEOUT_MS', 8000, 15000)
+    validationTimeoutMs: integer('RECEIPT_VALIDATION_TIMEOUT_MS', 8000, 15000),
+    processingTimeoutMs: integer('RECEIPT_PROCESSING_TIMEOUT_MS', 15000, 45000)
   };
 }
 

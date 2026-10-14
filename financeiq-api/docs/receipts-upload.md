@@ -2,7 +2,7 @@
 
 ## Fluxo e contrato
 
-`POST /receipts/analyze`: Bearer → verificação Firebase → piloto por UID → quota e concorrência → multipart → validação isolada → descarte → HTTP 501. Autenticação e autorização da Etapa 2 não foram alteradas.
+`POST /receipts/analyze`: Bearer → verificação Firebase → piloto por UID → quota e concorrência → multipart → validação isolada → consumidor interno opcional aguardado → descarte → HTTP 501. A rota padrão não instala consumidor. Autenticação e autorização da Etapa 2 não foram alteradas. Consulte o [ciclo de vida da Etapa 5A](receipts-document-lifecycle.md) para posse temporária e garantias de encerramento.
 
 Enviar exatamente um arquivo no campo `document`, sem campos textuais. JPG/JPEG (`image/jpeg`), PNG (`image/png`) e PDF (`application/pdf`). Extensão, MIME e assinatura real devem concordar; divergências são rejeitadas. Nenhuma URL é aceita. Tamanho e contagem são verificados durante streaming, inclusive sem Content-Length.
 
@@ -37,6 +37,7 @@ O upload fica indisponível por padrão. Para uma única aplicação, em um úni
 | `RECEIPT_GLOBAL_CONCURRENCY` | 4 | 4 |
 | `RECEIPT_UPLOAD_TIMEOUT_MS` | 20000 | 60000 |
 | `RECEIPT_VALIDATION_TIMEOUT_MS` | 8000 | 15000 |
+| `RECEIPT_PROCESSING_TIMEOUT_MS` | 15000 | 45000 (somente consumidor interno, cancelamento cooperativo) |
 
 Todos os valores são inteiros positivos configurados pelo servidor. Uma operação simultânea por UID. Quota de minuto usa janela móvel de 60 segundos; quota diária usa UTC. Toda tentativa autenticada/autorizada admitida consome quota, incluindo documento inválido ou cancelamento. Negação por concorrência não consome nova quota. O mapa possui teto de 1000 UIDs; saturação nega novas identidades. Reiniciar o processo perde os contadores: este modo não é adequado à produção ou múltiplas instâncias, mesmo que compartilhem o mesmo servidor.
 

@@ -58,7 +58,7 @@ Códigos incluem `MODEL_REFUSAL`, `INCOMPLETE_RESPONSE`, `INVALID_RESPONSE`, `IN
 
 Uma tentativa, sem retries ou fallback. Timeout/cancelamento abortam o sinal e invalidam resultados tardios, mesmo se o double não respeitar abort. Timers/listeners e referências de instruções, contexto e base64 são removidos ao finalizar. O adaptador não altera o buffer do chamador; a responsabilidade de zerá-lo continua no proprietário.
 
-**Integração com descarte ainda pendente:** o middleware da Etapa 3 atualmente valida, zera os bytes e libera a reserva antes de chamar o controller 501. Portanto, não basta plugar o adaptador nesse controller. Em uma etapa autorizada, a interpretação deverá ocorrer dentro do mesmo ciclo de vida/reserva, após validação e antes do descarte em `finally`, preservando cancelamento e limite total de execução. Nenhuma mudança nesse ciclo foi feita aqui.
+**Atualização da Etapa 5A:** o middleware agora oferece um consumidor interno opcional, após validação e antes do descarte, mantendo a reserva até sua confirmação de término. A rota padrão não instala consumidor e o adaptador continua desconectado. Uma futura ponte deve assegurar também o encerramento do transporte: retornar do adaptador após timeout não prova que um transporte ignorando abort terminou. Consulte [ciclo de vida documental](receipts-document-lifecycle.md). Nenhuma chamada real foi habilitada.
 
 Strings base64 e cópias internas não oferecem apagamento seguro em JavaScript. Não reter requests/respostas, nem usar documentos reais em doubles que gravam chamadas. `store: false` não equivale a Zero Data Retention do provedor. A ativação real exigirá reavaliar retenção, limites de custo, transporte, credenciais e infraestrutura distribuída.
 

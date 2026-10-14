@@ -18,12 +18,19 @@ export function validateReceiptDocument(upload: ReceiptUpload, config: ReceiptUp
     let failure: ReceiptUploadError | undefined;
     let replied = false;
     let done = false;
+    const stop = () => {
+      // Falha ao solicitar kill não comprova término. Aguardar close mesmo assim.
+      try { child.kill('SIGKILL'); } catch {
+        failure = new ReceiptUploadError(503, 'DOCUMENT_VALIDATION_UNAVAILABLE');
+      }
+    };
     // Nenhuma saída do parser é registrada. As saídas são apenas drenadas.
     child.stdout?.resume();
     child.stderr?.resume();
     const abort = () => {
+      if (done) return;
       failure = new ReceiptUploadError(504, 'DOCUMENT_VALIDATION_TIMEOUT');
-      child.kill('SIGKILL');
+      stop();
     };
     const timer = setTimeout(abort, config.validationTimeoutMs);
     signal.addEventListener('abort', abort, { once: true });
@@ -37,8 +44,9 @@ export function validateReceiptDocument(upload: ReceiptUpload, config: ReceiptUp
       else reject(new ReceiptUploadError(503, 'DOCUMENT_VALIDATION_UNAVAILABLE'));
     };
     child.on('error', () => {
+      if (done) return;
       failure = new ReceiptUploadError(503, 'DOCUMENT_VALIDATION_UNAVAILABLE');
-      child.kill('SIGKILL');
+      stop();
     });
     child.once('close', finish); // Só liberar reserva após o processo ser encerrado.
     child.once('message', (message: unknown) => {
@@ -50,11 +58,19 @@ export function validateReceiptDocument(upload: ReceiptUpload, config: ReceiptUp
       }
     });
     if (signal.aborted) abort();
-    else child.send({ bytes: upload.bytes, format: upload.format, config }, error => {
-      if (error && !done) {
+    else {
+      try {
+        child.send({ bytes: upload.bytes, format: upload.format, config }, error => {
+          if (error && !done) {
+            failure = new ReceiptUploadError(503, 'DOCUMENT_VALIDATION_UNAVAILABLE');
+            stop();
+          }
+        });
+      } catch {
+        // Um throw síncrono de send também precisa aguardar o worker encerrar.
         failure = new ReceiptUploadError(503, 'DOCUMENT_VALIDATION_UNAVAILABLE');
-        child.kill('SIGKILL');
+        stop();
       }
-    });
+    }
   });
 }

@@ -3,6 +3,7 @@ import { receiptUploadConfig, LocalReceiptLimits, type ReceiptUploadConfig } fro
 import { receiveReceipt, type ReceiptUpload } from '../services/receiptMultipart';
 import { validateReceiptDocument } from '../services/receiptDocumentValidation';
 import { ReceiptUploadError } from '../services/receiptUploadError';
+import { withReceiptDocument, type ReceiptDocumentConsumer } from '../services/receiptDocumentScope';
 
 const messages: Record<number, string> = {
   400: 'Envie somente um arquivo no campo document usando multipart/form-data.',
@@ -15,7 +16,7 @@ const messages: Record<number, string> = {
 };
 
 // Injeção apenas por código para testes; não exposta no corpo ou no ambiente.
-export function createReceiptUpload(env = process.env, validate = validateReceiptDocument): RequestHandler {
+export function createReceiptUpload(env = process.env, validate = validateReceiptDocument, consume?: ReceiptDocumentConsumer): RequestHandler {
   let config: ReceiptUploadConfig | undefined;
   try { config = receiptUploadConfig(env); } catch { /* Configuração inválida falha fechada. */ }
   const limits = config ? new LocalReceiptLimits(config) : undefined;
@@ -47,11 +48,14 @@ export function createReceiptUpload(env = process.env, validate = validateReceip
     res.once('close', cancel);
     let upload: ReceiptUpload | undefined;
     let failure: unknown;
+    let failed = false;
     try {
       upload = await receiveReceipt(req, config.maxFileBytes, controller.signal);
       clearTimeout(timer);
       await validate(upload, config, controller.signal);
-    } catch (error) { failure = error; }
+      // Só disponibilizar bytes após a validação real concluir e dentro da reserva.
+      if (consume) await withReceiptDocument(upload, consume, controller.signal, config.processingTimeoutMs);
+    } catch (error) { failed = true; failure = error; }
     finally {
       clearTimeout(timer);
       req.off('aborted', cancel);
@@ -61,7 +65,7 @@ export function createReceiptUpload(env = process.env, validate = validateReceip
       reservation.release();
     }
     if (req.aborted || res.destroyed) return;
-    if (failure) {
+    if (failed) {
       const error = failure instanceof ReceiptUploadError ? failure : new ReceiptUploadError(503, 'UPLOAD_UNAVAILABLE');
       // Não drenar um corpo rejeitado ilimitadamente: fechar a conexão após a resposta.
       refuse(error.status, error.code);
