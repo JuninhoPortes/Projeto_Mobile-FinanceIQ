@@ -38,7 +38,7 @@ function fixture(options = {}) {
     requests.push(args);
     if (options.fetch) return options.fetch(...args);
     return { status: options.status ?? 200, json: async () => options.body ?? response() };
-  } }).createReceiptBackendService(options.timeoutMs ?? 1000);
+  } }).createReceiptBackendService(options.timeoutMs ?? 1000, options.mode);
   return { service, auth, requests, tokenCalls: () => tokenCalls };
 }
 
@@ -257,7 +257,10 @@ function modeFixture(mode, development = true) {
   const module = loadTypeScript('src/services/receiptAnalysisService.ts', {
     '../constants/receiptMockConfig': { receiptMockConfig: { scenario: 'success', delayMs: 0 } },
     './receiptMockService': { createReceiptMockService: () => ({ analyze: async () => { calls.mock++; return { status: 'success', provider: 'mock' }; } }) },
-    './receiptBackendService': { receiptBackendService: { analyze: async () => { calls.backend++; return { status: 'error', provider: 'backend' }; } } }
+    './receiptBackendService': {
+      receiptBackendService: { analyze: async () => { calls.backend++; return { status: 'error', provider: 'backend', isSimulated: true }; } },
+      receiptRealBackendService: { analyze: async () => { calls.backend++; return { status: 'error', provider: 'backend', isSimulated: false }; } }
+    }
   }, { __DEV__: development, process: { env: { EXPO_PUBLIC_RECEIPT_ANALYSIS_MODE: mode } } });
   return { ...module, calls };
 }
@@ -279,11 +282,136 @@ test('backend simulado exige seleção explícita e erro não faz fallback para 
 });
 
 test('modo desconhecido ou backend em produção bloqueia sem selecionar outro provedor', async () => {
-  for (const [mode, development] of [['real', true], ['', true], ['backend-simulated', false]]) {
+  for (const [mode, development] of [['real', true], ['', true], ['backend-simulated', false], ['backend-real', false]]) {
     const f = modeFixture(mode, development);
     assert.equal(f.receiptAnalysisMode, 'unavailable');
     assert.equal((await f.receiptAnalysisService.analyze(doc, context)).status, 'error');
     assert.deepEqual(f.calls, { mock: 0, backend: 0 });
+  }
+});
+
+const realResponse = (status = 'partial', fields = { description: 'Compra no mercado', amount: 24.9, type: 'outcome' }) => ({
+  ...response(status, fields), isSimulated: false, message: 'UNTRUSTED-NETWORK-MESSAGE'
+});
+const realDocumentFailure = (documentStatus, acceptance, fields = {}) => {
+  const value = realResponse(); delete value.fields;
+  return { ...value, status: 'error', documentStatus,
+    assessment: { ...value.assessment, acceptance, fields } };
+};
+
+test('backend real exige seleção explícita de desenvolvimento e não faz fallback', async () => {
+  const f = modeFixture('backend-real');
+  assert.equal(f.receiptAnalysisMode, 'backend-real');
+  assert.equal((await f.receiptAnalysisService.analyze(doc, context)).isSimulated, false);
+  assert.deepEqual(f.calls, { mock: 0, backend: 1 });
+});
+
+test('respostas reais completas e parciais passam pelo mesmo upload autenticado com origem preservada', async () => {
+  for (const status of ['success', 'partial']) {
+    const body = realResponse(status, { description: 'Compra no mercado', amount: 24.9, type: 'outcome',
+      ...(status === 'success' ? { category: 'Alimentação' } : {}), identifiedDate: '2026-10-14' });
+    const f = fixture({ mode: 'real', body });
+    const result = await f.service.analyze(doc, context);
+    assert.equal(result.status, status); assert.equal(result.documentStatus, status); assert.equal(result.isSimulated, false);
+    assert.equal(result.fields.amount, 24.9); assert.equal(result.fields.identifiedDate, '2026-10-14');
+    assert.doesNotMatch(result.message, /simulad|demonstrativ|UNTRUSTED/);
+    assert.equal(f.requests.length, 1); assert.equal(f.tokenCalls(), 1);
+    assert.deepEqual(plain(f.requests[0][1].headers), { Authorization: 'Bearer synthetic-secret-token' });
+    assert.equal(JSON.stringify(result).includes('synthetic-secret-token'), false);
+    if (status === 'partial') assert.equal('category' in result.fields, false);
+  }
+});
+
+test('rejeição e inconclusão reais preservam o estado documental sem campos aplicáveis', async () => {
+  for (const [status, acceptance, fields] of [
+    ['rejected', 'rejected', {}], ['inconclusive', 'undetermined', {}],
+    ['inconclusive', 'accepted', {}], ['inconclusive', 'accepted', { identifiedDate: '2026-10-14' }]
+  ]) {
+    const f = fixture({ mode: 'real', body: realDocumentFailure(status, acceptance, fields) });
+    const result = await f.service.analyze(doc, context);
+    assert.equal(result.status, 'error'); assert.equal(result.documentStatus, status); assert.equal(result.isSimulated, false);
+    assert.equal('fields' in result, false); assert.doesNotMatch(result.message, /Simulação|UNTRUSTED/);
+  }
+});
+
+test('origem real e simulada divergentes do modo solicitado são rejeitadas sem campos', () => {
+  for (const [body, mode] of [[realResponse(), 'simulated'], [response(), 'real'],
+    [{ ...realResponse(), isSimulated: 'false' }, 'real'], [{ ...realResponse(), provider: 'mock' }, 'real']]) {
+    const result = parser.parseReceiptBackendResponse(body, mode);
+    assert.equal(result.status, 'error'); assert.equal('fields' in result, false);
+    assert.equal(result.documentStatus, undefined);
+  }
+});
+
+test('contratos reais inválidos não escapam pelas respostas documentais nem por metadados', () => {
+  const invalid = [null, {}, { ...realResponse(), assessment: undefined }, realResponse('success'),
+    realResponse('partial', {}), realResponse('partial', { identifiedDate: '2026-10-14' }),
+    realResponse('partial', { category: 'Alimentação' }),
+    realResponse('partial', { amount: 1.001 }), realResponse('partial', { amount: 1000000.01 }),
+    realResponse('partial', { amount: -1 }), realResponse('partial', { amount: Infinity }),
+    realResponse('partial', { type: 'expense' }), realResponse('partial', { description: ' ' }),
+    realResponse('partial', { date: '2026-10-14' }), realResponse('partial', { identifiedDate: '0000-01-01' }),
+    realResponse('partial', { identifiedDate: '2026-02-30' }), realDocumentFailure('rejected', 'accepted'),
+    realDocumentFailure('rejected', 'rejected', { amount: 24.9 }),
+    realDocumentFailure('inconclusive', 'accepted', { description: 'Unsafe' }),
+    realDocumentFailure('inconclusive', 'undetermined', { identifiedDate: '2026-10-14' }),
+    realDocumentFailure('inconclusive', 'accepted', { identifiedDate: 'invalid' })];
+  for (const mutate of [
+    value => { value.assessment.fields.amount = 999; },
+    value => { value.assessment.missingFields = ['amount']; },
+    value => { value.assessment.uncertainFields = ['amount']; },
+    value => { value.assessment.missingFields = ['merchant', 'merchant']; },
+    value => { value.assessment.missingFields = ['merchant']; value.assessment.uncertainFields = ['merchant']; },
+    value => { value.assessment.reasonCodes = ['UNTRUSTED-NETWORK-MESSAGE']; },
+    value => { value.documentStatus = 'success'; }
+  ]) { const value = realResponse(); mutate(value); invalid.push(value); }
+  for (const body of invalid) {
+    const result = parser.parseReceiptBackendResponse(body, 'real');
+    assert.equal(result.status, 'error'); assert.equal('fields' in result, false); assert.equal(result.documentStatus, undefined);
+    assert.equal(JSON.stringify(result).includes('UNTRUSTED'), false);
+  }
+});
+
+test('parcial real omite campos ausentes e incertos sem inventar total, tipo ou categoria', () => {
+  const body = realResponse('partial', { description: 'Serviço reconhecido' });
+  body.assessment.missingFields = ['amount', 'category']; body.assessment.uncertainFields = ['type'];
+  const result = parser.parseReceiptBackendResponse(body, 'real');
+  assert.equal(result.status, 'partial'); assert.deepEqual(plain(result.fields), { description: 'Serviço reconhecido' });
+});
+
+test('falhas HTTP reais não aplicam corpo de erro, vazam mensagens ou fazem retry', async () => {
+  for (const status of [400, 401, 403, 413, 415, 422, 429, 501, 503, 504]) {
+    const f = fixture({ mode: 'real', status, body: realResponse('success', { amount: 9999 }) });
+    const result = await f.service.analyze(doc, context);
+    assert.equal(result.status, 'error'); assert.equal(result.isSimulated, false); assert.equal('fields' in result, false);
+    assert.equal(result.documentStatus, undefined); assert.equal(f.requests.length, 1);
+    assert.equal(JSON.stringify(result).includes('UNTRUSTED'), false);
+  }
+});
+
+test('troca de sessão durante JSON real e falha de token impedem aplicação', async () => {
+  const decoded = deferred();
+  const f = fixture({ mode: 'real', fetch: async () => ({ status: 200, json: () => decoded.promise }) });
+  const pending = f.service.analyze(doc, context); await new Promise(resolve => setImmediate(resolve));
+  f.auth.currentUser = null; decoded.resolve(realResponse());
+  assert.equal((await pending).status, 'error');
+  const g = fixture({ mode: 'real', user: { getIdToken: async () => { throw new Error('private'); } } });
+  assert.equal((await g.service.analyze(doc, context)).status, 'error'); assert.equal(g.requests.length, 0);
+});
+
+test('cancelamento e timeout reais descartam respostas tardias sem fallback', async () => {
+  for (const timeout of [false, true]) {
+    const reply = deferred(); const controller = new AbortController();
+    const f = fixture({ mode: 'real', timeoutMs: timeout ? 10 : 1000, fetch: () => reply.promise });
+    const pending = f.service.analyze(doc, context, controller.signal);
+    await new Promise(resolve => setImmediate(resolve));
+    if (!timeout) controller.abort();
+    const result = await pending;
+    assert.equal(result.status, timeout ? 'error' : 'cancelled'); assert.equal(result.isSimulated, false);
+    assert.equal('fields' in result, false); assert.equal(f.requests.length, 1);
+    let decoded = false;
+    reply.resolve({ status: 200, json: async () => { decoded = true; return realResponse(); } });
+    await new Promise(resolve => setImmediate(resolve)); assert.equal(decoded, false);
   }
 });
 

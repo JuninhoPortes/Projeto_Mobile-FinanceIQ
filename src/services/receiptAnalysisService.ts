@@ -9,7 +9,7 @@ const configuredMode = typeof process === 'undefined'
 
 // Modo desconhecido ou backend solicitado em produção: bloquear, sem fallback.
 export const receiptAnalysisMode = configuredMode === 'mock' ? 'mock'
-  : configuredMode === 'backend-simulated' && isDevelopment ? 'backend-simulated' : 'unavailable';
+  : (configuredMode === 'backend-simulated' || configuredMode === 'backend-real') && isDevelopment ? configuredMode : 'unavailable';
 
 export const receiptAnalysisService: ReceiptInterpretationService = receiptAnalysisMode === 'mock'
   ? createReceiptMockService(isDevelopment ? receiptMockConfig : { scenario: 'success', delayMs: 1200 })
@@ -19,7 +19,8 @@ export const receiptAnalysisService: ReceiptInterpretationService = receiptAnaly
         provider: 'backend', isSimulated: true, status: 'error',
         message: 'Análise indisponível neste ambiente. Continue preenchendo manualmente.'
       };
-      const { receiptBackendService } = await import('./receiptBackendService');
-      return receiptBackendService.analyze(document, context, signal);
+      const { receiptBackendService, receiptRealBackendService } = await import('./receiptBackendService');
+      const service = receiptAnalysisMode === 'backend-real' ? receiptRealBackendService : receiptBackendService;
+      return service.analyze(document, context, signal);
     }
   };

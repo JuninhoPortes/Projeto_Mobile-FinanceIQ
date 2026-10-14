@@ -1,5 +1,7 @@
 # Etapa 5B.2A — frontend com backend simulado
 
+Atualização: o [suporte a respostas reais](receipts-frontend-real.md) reutiliza este fluxo com seleção explícita de origem, validação e revisão antes de Salvar. As restrições descritas abaixo são históricas da 5B.2A; o novo modo de desenvolvimento `backend-real` não habilita chamadas nem altera o bloqueio operacional do servidor.
+
 ## Escopo e fluxo
 
 Branch verificada: `feat/leitura-notas-openai`. O Git estava limpo e os commits anteriores eram `b72558e` (backend simulado) e `91a4dec` (tipagem e contadores). Não foram alterados backend, autorização, quotas, ciclo documental do servidor, credenciais, `.env` reais ou dependências.

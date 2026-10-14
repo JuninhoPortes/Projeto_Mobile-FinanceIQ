@@ -753,6 +753,89 @@ test('aviso diferencia envio ao servidor de mock local sem controles técnicos a
   mock.runtime.unmount();
 });
 
+test('respostas reais completas e parciais preenchem para revisão, preservam categoria manual e só Salvar persiste', async () => {
+  for (const status of ['success', 'partial']) {
+    const screen = await realScreen();
+    button(screen.runtime.tree, 'Compras').props.onPress(); screen.runtime.render();
+    const child = importRuntime(receiptSection(screen.runtime).props, 'backend-real');
+    assert.match(text(child.runtime.tree), /servidor FinanceIQ e à OpenAI/);
+    const pending = button(child.runtime.tree, 'Escolher arquivo').props.onPress(); await tick(); child.runtime.render();
+    assert.ok(find(child.runtime.tree, node => node.type === 'ActivityIndicator'));
+    assert.equal(text(child.runtime.tree).includes('Análise simulada'), false);
+    assert.equal(find(child.runtime.tree, node => node.type === 'ActivityIndicator').props.accessibilityLabel, 'Analisando nota fiscal');
+    const result = { provider: 'backend', isSimulated: false, status, documentStatus: status,
+      message: status === 'partial' ? 'Leitura parcial do documento. Revise os campos reconhecidos.' : 'Dados reconhecidos no documento. Confira os campos.',
+      fields: { description: 'Compra no mercado', amount: 24.9, type: 'outcome', identifiedDate: '2026-10-14',
+        ...(status === 'success' ? { category: 'Alimentação' } : {}) } };
+    child.finish(result); await pending; child.runtime.render(); screen.runtime.render();
+    assert.equal(input(screen.runtime, 'Ex: Netflix').props.value, 'Compra no mercado');
+    assert.equal(input(screen.runtime, '0,00').props.value, '24,90');
+    assert.equal(categorySelected(screen.runtime, 'Compras'), true);
+    assert.equal(text(child.runtime.tree).includes('simulad'), false);
+    assert.match(text(child.runtime.tree), /14\/10\/2026/); assert.match(text(child.runtime.tree), /data do lançamento foi preservada/);
+    assert.equal(screen.writes.length, 0);
+    button(child.runtime.tree, 'Voltar ao formulário').props.onPress(); child.runtime.render();
+    input(screen.runtime, '0,00').props.onChangeText('2590'); screen.runtime.render();
+    const save = button(screen.runtime.tree, 'Salvar').props.onPress();
+    assert.equal(screen.writes.length, 1); assert.equal(screen.writes[0].data.amount, 25.9);
+    assert.equal(screen.writes[0].data.category, 'Compras');
+    assert.deepEqual(Object.keys(screen.writes[0].data).sort(), ['amount', 'category', 'description', 'type']);
+    screen.releaseSave(); await save;
+    child.runtime.unmount(); screen.runtime.unmount();
+  }
+});
+
+test('rejeição, inconclusão e erro reais são distintos e preservam todo o formulário', async () => {
+  for (const documentStatus of ['rejected', 'inconclusive', undefined]) {
+    const screen = await realScreen();
+    changeDescription(screen.runtime, 'Descrição manual');
+    input(screen.runtime, '0,00').props.onChangeText('1234'); screen.runtime.render();
+    button(screen.runtime.tree, 'Compras').props.onPress(); screen.runtime.render();
+    const child = importRuntime(receiptSection(screen.runtime).props, 'backend-real');
+    const pending = button(child.runtime.tree, 'Escolher arquivo').props.onPress(); await tick();
+    const message = documentStatus === 'rejected' ? 'Documento incompatível.' : documentStatus === 'inconclusive' ? 'Análise inconclusiva.' : 'Serviço de análise indisponível.';
+    child.finish({ provider: 'backend', isSimulated: false, status: 'error', documentStatus, message });
+    await pending; child.runtime.render(); screen.runtime.render();
+    assert.match(text(child.runtime.tree), new RegExp(message));
+    assert.equal(child.applied.length, 0); assert.equal(screen.writes.length, 0);
+    assert.equal(input(screen.runtime, 'Ex: Netflix').props.value, 'Descrição manual');
+    assert.equal(input(screen.runtime, '0,00').props.value, '12,34'); assert.equal(categorySelected(screen.runtime, 'Compras'), true);
+    button(child.runtime.tree, 'Voltar ao formulário').props.onPress(); child.runtime.render();
+    // O aviso permanece junto ao formulário mesmo com o seletor fechado.
+    assert.equal(find(child.runtime.tree, node => node.type === 'Modal').props.visible, false);
+    assert.match(text(child.runtime.tree), new RegExp(message));
+    child.runtime.unmount(); screen.runtime.unmount();
+  }
+});
+
+test('análise real tardia não sobrescreve edição, fechamento ou cancelamento', async () => {
+  for (const action of ['edit', 'close', 'cancel', 'blur']) {
+    const screen = await realScreen(); const child = importRuntime(receiptSection(screen.runtime).props, 'backend-real');
+    const pending = button(child.runtime.tree, 'Escolher arquivo').props.onPress(); await tick(); child.runtime.render();
+    if (action === 'edit') changeDescription(screen.runtime, 'Correção manual');
+    if (action === 'close') button(screen.runtime.tree, 'Cancelar').props.onPress();
+    if (action === 'cancel') button(child.runtime.tree, 'Cancelar análise').props.onPress();
+    if (action === 'blur') child.blur();
+    child.finish({ ...analysis(), provider: 'backend', isSimulated: false }); await pending;
+    child.runtime.render(); screen.runtime.render();
+    assert.equal(input(screen.runtime, 'Ex: Netflix').props.value, action === 'edit' ? 'Correção manual' : '');
+    assert.equal(screen.writes.length, 0);
+    child.runtime.unmount(); screen.runtime.unmount();
+  }
+});
+
+test('tipo real incompatível invalida categoria manual sem escolher categoria inexistente ou inativa', async () => {
+  const screen = await realScreen();
+  button(screen.runtime.tree, 'Compras').props.onPress(); screen.runtime.render();
+  receiptSection(screen.runtime).props.onApply({ provider: 'backend', isSimulated: false, status: 'partial',
+    message: 'Leitura parcial.', fields: { description: 'Recebimento', amount: 24.9, type: 'income', category: 'Inventada' } });
+  screen.runtime.render();
+  assert.equal(categorySelected(screen.runtime, 'Compras'), false); assert.equal(categorySelected(screen.runtime, 'Receita'), false);
+  assert.equal(screen.writes.length, 0);
+  await button(screen.runtime.tree, 'Salvar').props.onPress(); assert.equal(screen.writes.length, 0);
+  screen.runtime.unmount();
+});
+
 test('mostra loading e aplica resultado somente após conclusão', async () => {
   const { runtime, applied, finish } = importRuntime();
   const pending = button(runtime.tree, 'Escolher arquivo').props.onPress();
@@ -766,6 +849,8 @@ test('mostra loading e aplica resultado somente após conclusão', async () => {
   runtime.render();
   assert.equal(applied.length, 1);
   assert.match(text(runtime.tree), /Dados simulados preenchidos/);
+  assert.match(text(runtime.tree), /Data demonstrativa/);
+  assert.equal(text(runtime.tree).includes('Data identificada no documento'), false);
   runtime.unmount();
 });
 

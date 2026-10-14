@@ -2,7 +2,7 @@ import { auth } from '../../firebaseConfig';
 import { api } from './api';
 import { normalizeReceiptDocument } from './receiptDocumentService';
 import { createReceiptMultipart } from './receiptMultipartService';
-import { parseSimulatedReceiptResponse } from './receiptBackendResponseService';
+import { parseReceiptBackendResponse } from './receiptBackendResponseService';
 import type { ReceiptAnalysisResult, ReceiptInterpretationService } from '../types/receipt';
 
 const messages: Record<number, string> = {
@@ -17,10 +17,9 @@ const messages: Record<number, string> = {
   503: 'Serviço de análise indisponível. Tente novamente mais tarde.',
   504: 'A análise demorou demais. Tente novamente ou preencha manualmente.'
 };
-const failure = (message: string): ReceiptAnalysisResult => ({ provider: 'backend', isSimulated: true, status: 'error', message });
-const cancelled = (): ReceiptAnalysisResult => ({ provider: 'backend', isSimulated: true, status: 'cancelled', message: 'Operação cancelada.' });
-
-export function createReceiptBackendService(timeoutMs = 45000): ReceiptInterpretationService {
+export function createReceiptBackendService(timeoutMs = 45000, mode: 'simulated' | 'real' = 'simulated'): ReceiptInterpretationService {
+  const failure = (message: string): ReceiptAnalysisResult => ({ provider: 'backend', isSimulated: mode === 'simulated', status: 'error', message });
+  const cancelled = (): ReceiptAnalysisResult => ({ provider: 'backend', isSimulated: mode === 'simulated', status: 'cancelled', message: 'Operação cancelada.' });
   return {
     async analyze(document, _context, signal) {
       if (signal?.aborted) return cancelled();
@@ -60,7 +59,7 @@ export function createReceiptBackendService(timeoutMs = 45000): ReceiptInterpret
         const value: unknown = await response.json();
         if (controller.signal.aborted) return cancelled();
         if (auth.currentUser !== user) return failure(messages[401]);
-        return parseSimulatedReceiptResponse(value);
+        return parseReceiptBackendResponse(value, mode);
       };
       try {
         return await Promise.race([execute().catch(() => failure('Não foi possível comunicar com o serviço de análise. Os campos foram preservados.')), interrupted]);
@@ -75,3 +74,4 @@ export function createReceiptBackendService(timeoutMs = 45000): ReceiptInterpret
 }
 
 export const receiptBackendService = createReceiptBackendService();
+export const receiptRealBackendService = createReceiptBackendService(45000, 'real');
