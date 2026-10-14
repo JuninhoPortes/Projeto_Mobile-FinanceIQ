@@ -56,7 +56,7 @@ export type ReceiptAnalysisResult = ReceiptAnalysisMetadata & (
   | { status: 'cancelled' }
 );
 
-// Uma implementação futura poderá chamar o backend mantendo este contrato.
+// Contrato compartilhado pelo mock local e pelo backend simulado.
 export interface ReceiptInterpretationService {
   analyze(
     document: ReceiptDocument,

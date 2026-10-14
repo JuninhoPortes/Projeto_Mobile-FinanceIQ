@@ -49,6 +49,7 @@ export default function Lancamentos() {
   const savingRef = useRef(false);
   const receiptFormOpenRef = useRef(false);
   const receiptFormSessionRef = useRef(0);
+  const receiptFormRevisionRef = useRef(0);
   const receiptFormSession = receiptFormSessionRef.current;
   const receiptCategoryOverrideRef = useRef<{
     description: string;
@@ -165,6 +166,7 @@ export default function Lancamentos() {
   const handleChangeType = (
     selectedType: 'income' | 'outcome'
   ) => {
+    receiptFormRevisionRef.current += 1;
     receiptCategoryOverrideRef.current = null;
     setType(selectedType);
 
@@ -175,6 +177,7 @@ export default function Lancamentos() {
 
   const applySuggestedCategory = () => {
     if (categorySuggestion?.category) {
+      receiptFormRevisionRef.current += 1;
       setSelectedCategoryName(
         categorySuggestion.category.name
       );
@@ -220,6 +223,7 @@ export default function Lancamentos() {
   };
   
   const handleSelectCategory = (categoryName: string) => {
+  receiptFormRevisionRef.current += 1;
   setSelectedCategoryName((currentCategory) => {
     if (currentCategory === categoryName) {
       return '';
@@ -880,6 +884,7 @@ const handleSave = async () => {
                   <ReceiptImportSection
                     categories={availableCategories}
                     onApply={applyReceiptAnalysis}
+                    getFormRevision={() => receiptFormRevisionRef.current}
                     disabled={isSaving}
                   />
                 )}
@@ -1047,6 +1052,7 @@ const handleSave = async () => {
   keyboardType="numeric"
   value={amount}
   onChangeText={(text) => {
+    receiptFormRevisionRef.current += 1;
     const formatted = formatMoney(text);
     setAmount(formatted);
   }}
@@ -1067,6 +1073,7 @@ const handleSave = async () => {
                       placeholder="Ex: Netflix"
                       value={description}
                       onChangeText={(text) => {
+                        receiptFormRevisionRef.current += 1;
                         receiptCategoryOverrideRef.current = null;
                         setDescription(text);
                       }}

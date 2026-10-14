@@ -3,12 +3,13 @@ import { ActivityIndicator, Keyboard, Modal, Platform, ScrollView, StyleSheet, T
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { useIsFocused } from '@react-navigation/native';
 import { acquireReceiptDocument, releaseReceiptDocument } from '../services/receiptAcquisitionService';
-import { receiptAnalysisService } from '../services/receiptAnalysisService';
+import { receiptAnalysisMode, receiptAnalysisService } from '../services/receiptAnalysisService';
 import type { ReceiptAnalysisContext, ReceiptAnalysisResult, ReceiptDocument, ReceiptSource } from '../types/receipt';
 
 interface ReceiptImportSectionProps {
   categories: ReceiptAnalysisContext['categories'];
   onApply: (result: ReceiptAnalysisResult) => boolean;
+  getFormRevision?: () => number;
   disabled?: boolean;
 }
 
@@ -58,6 +59,7 @@ export default function ReceiptImportSection(props: ReceiptImportSectionProps) {
   const selectDocument = async (source: ReceiptSource) => {
     if (operationRef.current || propsRef.current.disabled) return;
     const controller = new AbortController();
+    const formRevision = propsRef.current.getFormRevision?.();
     operationRef.current = controller;
     setErrorMessage('');
     setStatus('selecting');
@@ -89,6 +91,11 @@ export default function ReceiptImportSection(props: ReceiptImportSectionProps) {
       );
       if (operationRef.current !== controller || controller.signal.aborted) return;
       if (analysis.status === 'success' || analysis.status === 'partial') {
+        if (propsRef.current.getFormRevision?.() !== formRevision) {
+          setErrorMessage('Os campos foram editados durante a análise e foram preservados. Inicie outra importação se desejar.');
+          setStatus('error');
+          return;
+        }
         if (propsRef.current.disabled || !propsRef.current.onApply(analysis)) {
           setStatus('cancelled');
           return;
@@ -123,7 +130,11 @@ export default function ReceiptImportSection(props: ReceiptImportSectionProps) {
             ? 'Operação cancelada. Os campos do formulário foram preservados.'
             : status === 'error'
               ? errorMessage
-              : 'Selecione JPG/JPEG, PNG ou PDF de até 10 MB. A análise retorna dados simulados e pode substituir campos preenchidos. Nenhum documento será enviado a serviços externos.';
+              : receiptAnalysisMode === 'backend-simulated'
+                ? 'Selecione JPG/JPEG, PNG ou PDF de até 10 MiB. O documento será enviado ao servidor FinanceIQ. Os dados retornados são demonstrativos, sem leitura real do conteúdo. Revise antes de salvar.'
+                : receiptAnalysisMode === 'unavailable'
+                  ? 'Análise indisponível neste ambiente. Continue preenchendo manualmente.'
+                  : 'Selecione JPG/JPEG, PNG ou PDF de até 10 MB. A análise retorna dados simulados e pode substituir campos preenchidos. Nenhum documento será enviado a serviços externos.';
 
   return (
     <>

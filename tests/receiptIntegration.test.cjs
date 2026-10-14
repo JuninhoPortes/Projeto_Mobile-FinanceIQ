@@ -145,10 +145,11 @@ test('fechar e reabrir o formulário invalida até um callback capturado anterio
   runtime.unmount();
 });
 
-function importRuntime() {
+function importRuntime(props = {}, mode) {
   const runtime = createHookRuntime();
   let focused = true;
   let resolveAnalysis;
+  const analyses = [];
   let passedSignal;
   const applied = [];
   const released = [];
@@ -162,23 +163,113 @@ function importRuntime() {
       acquireReceiptDocument: async () => ({ status: 'selected', document: doc }),
       releaseReceiptDocument: document => released.push(document)
     },
-    '../services/receiptAnalysisService': { receiptAnalysisService: {
+    '../services/receiptAnalysisService': { receiptAnalysisMode: mode, receiptAnalysisService: {
       analyze: (document, context, signal) => {
         passedSignal = signal;
-        return new Promise(resolve => { resolveAnalysis = resolve; });
+        return new Promise(resolve => { resolveAnalysis = resolve; analyses.push(resolve); });
       }
     } }
   }).default;
-  runtime.mount(component, { categories, onApply: result => { applied.push(result); return true; } });
+  runtime.mount(component, { categories, onApply: result => { applied.push(result); return true; }, ...props });
   button(runtime.tree, 'Importar nota fiscal').props.onPress();
   runtime.render();
   return {
     runtime, applied, released,
-    finish: value => resolveAnalysis(value),
+    finish: (value, index) => index === undefined ? resolveAnalysis(value) : analyses[index](value),
     signal: () => passedSignal,
     blur: () => { focused = false; runtime.render(); }
   };
 }
+
+test('edições manuais durante análise preservam descrição, valor, tipo e categoria sem persistir', async () => {
+  for (const edit of ['description', 'amount', 'type', 'category']) {
+    const screen = await screenRuntime();
+    const section = find(screen.runtime.tree, node => node.type === 'ReceiptImportSection');
+    const child = importRuntime(section.props);
+    const pending = button(child.runtime.tree, 'Escolher arquivo').props.onPress();
+    await tick(); child.runtime.render();
+    const before = section.props.getFormRevision();
+    if (edit === 'description') input(screen.runtime, 'Ex: Netflix').props.onChangeText('Correção manual');
+    if (edit === 'amount') input(screen.runtime, '0,00').props.onChangeText('9900');
+    if (edit === 'type') button(screen.runtime.tree, '↑ Entrada').props.onPress();
+    if (edit === 'category') button(screen.runtime.tree, 'Lazer').props.onPress();
+    // A ref invalida o resultado mesmo antes de uma nova renderização.
+    assert.ok(section.props.getFormRevision() > before);
+    child.finish({ ...analysis(), provider: 'backend' });
+    await pending;
+    child.runtime.render(); screen.runtime.render();
+    assert.match(text(child.runtime.tree), /campos foram editados/);
+    assert.equal(input(screen.runtime, 'Ex: Netflix').props.value, edit === 'description' ? 'Correção manual' : '');
+    assert.equal(input(screen.runtime, '0,00').props.value, edit === 'amount' ? '99,00' : '');
+    assert.equal(screen.writes.length, 0);
+    child.runtime.unmount(); screen.runtime.unmount();
+  }
+});
+
+test('nova importação após cancelar invalida a antiga e aplica apenas a resposta atual', async () => {
+  const f = importRuntime();
+  const first = button(f.runtime.tree, 'Escolher arquivo').props.onPress();
+  await tick(); f.runtime.render();
+  button(f.runtime.tree, 'Cancelar análise').props.onPress();
+  f.runtime.render();
+  const second = button(f.runtime.tree, 'Escolher arquivo').props.onPress();
+  await tick();
+  f.finish({ ...analysis(), fields: { ...analysis().fields, description: 'Resposta antiga' } }, 0);
+  await first;
+  assert.equal(f.applied.length, 0);
+  f.finish({ ...analysis(), fields: { ...analysis().fields, description: 'Resposta atual' } }, 1);
+  await second;
+  assert.equal(f.applied.length, 1);
+  assert.equal(f.applied[0].fields.description, 'Resposta atual');
+  f.runtime.unmount();
+});
+
+test('resposta do backend sem categoria preserva seleção compatível e continua exigindo Salvar', async () => {
+  const f = await screenRuntime();
+  input(f.runtime, 'Ex: Netflix').props.onChangeText('Descrição anterior');
+  f.runtime.render();
+  button(f.runtime.tree, 'Lazer').props.onPress();
+  f.runtime.render();
+  const result = { provider: 'backend', isSimulated: true, status: 'partial', message: 'Dados demonstrativos.',
+    fields: { description: 'SIMULAÇÃO — compra', amount: 129.9, type: 'outcome', identifiedDate: '2020-01-01' } };
+  find(f.runtime.tree, node => node.type === 'ReceiptImportSection').props.onApply(result);
+  f.runtime.render();
+  assert.equal(input(f.runtime, 'Ex: Netflix').props.value, result.fields.description);
+  assert.equal(input(f.runtime, '0,00').props.value, '129,90');
+  assert.equal(button(f.runtime.tree, 'Lazer').props.style[1].backgroundColor, '#333333');
+  assert.equal(f.writes.length, 0);
+  const pending = button(f.runtime.tree, 'Salvar').props.onPress();
+  assert.equal(f.writes.length, 1);
+  assert.deepEqual(Object.keys(f.writes[0].data).sort(), ['amount', 'category', 'description', 'type']);
+  assert.equal(f.writes[0].data.category, 'Lazer');
+  f.releaseSave(); await pending;
+  f.runtime.unmount();
+});
+
+test('fechar formulário durante análise impede aplicação mesmo com resposta backend tardia', async () => {
+  const screen = await screenRuntime();
+  const section = find(screen.runtime.tree, node => node.type === 'ReceiptImportSection');
+  const child = importRuntime(section.props);
+  const pending = button(child.runtime.tree, 'Escolher arquivo').props.onPress();
+  await tick();
+  button(screen.runtime.tree, 'Cancelar').props.onPress();
+  child.finish({ ...analysis(), provider: 'backend' });
+  await pending;
+  screen.runtime.render();
+  assert.equal(input(screen.runtime, 'Ex: Netflix').props.value, '');
+  assert.equal(screen.writes.length, 0);
+  child.runtime.unmount(); screen.runtime.unmount();
+});
+
+test('aviso diferencia envio ao servidor de mock local sem controles técnicos adicionais', () => {
+  const backend = importRuntime({}, 'backend-simulated');
+  assert.match(text(backend.runtime.tree), /enviado ao servidor FinanceIQ/);
+  assert.equal(text(backend.runtime.tree).includes('Nenhum documento será enviado'), false);
+  backend.runtime.unmount();
+  const mock = importRuntime({}, 'mock');
+  assert.match(text(mock.runtime.tree), /Nenhum documento será enviado a serviços externos/);
+  mock.runtime.unmount();
+});
 
 test('mostra loading e aplica resultado somente após conclusão', async () => {
   const { runtime, applied, finish } = importRuntime();
