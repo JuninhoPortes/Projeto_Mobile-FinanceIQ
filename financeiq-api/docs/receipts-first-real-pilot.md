@@ -1,6 +1,32 @@
 # Etapa 6C.2 — preparação operacional do primeiro teste real
 
-Este roteiro é para execução futura, **após autorização explícita para UMA chamada paga**. Não foi executado nesta entrega. Não usar o frontend para o piloto: ele mantém suas proteções atuais para respostas simuladas. Não criar credenciais, documento ou `.env` privado nesta etapa.
+Este documento preserva o roteiro preparado na Etapa 6C.2, que não executou chamadas pagas. O registro posterior abaixo informa a conclusão da primeira tentativa real relatada pelo responsável. **Não repetir o roteiro nem rearmar a tentativa única.** Qualquer novo teste depende de autorização separada. O frontend mantém suas proteções atuais para respostas simuladas; esta revisão não cria credenciais, documento ou `.env` privado.
+
+## Registro posterior — primeiro piloto real concluído
+
+O responsável informou a conclusão da primeira chamada real após a entrega 6C.2. Este registro utiliza exclusivamente os resultados fornecidos, sem acessar documento, resposta bruta, logs privados, credenciais ou marcador operacional. A revisão que acrescenta este registro não executa chamadas ao provedor nem autoriza uma segunda tentativa. O roteiro abaixo permanece como histórico da preparação, não como instrução para repeti-lo; a trava de uso único deve permanecer intacta.
+
+| Dado informado | Resultado |
+| --- | --- |
+| Endpoint | `POST /receipts/analyze` |
+| HTTP | `200` |
+| `isSimulated` | `false` |
+| `status` do contrato compatível | `error` |
+| `documentStatus` | `rejected` |
+| Modelo | `gpt-5.4-mini-2026-03-17` |
+| Duração | 3082 ms |
+| Tokens de entrada / saída / cache | 3867 / 133 / 0 |
+| Custo estimado informado | US$ 0,00349875 |
+
+O documento era um PNG sintético com dois produtos, total de R$ 24,90 e identificação explícita de ausência de validade fiscal. O total é uma característica do documento de teste; não foi comprovado como campo extraído. O custo acima é estimativa, não confirmação de cobrança/fatura na plataforma.
+
+**O resultado relatado comprova o funcionamento da integração com o provedor e a entrega de um resultado documental pelo backend. A extração de uma nota fiscal válida ainda não foi comprovada.** Uma análise concluída pode rejeitar o documento e continua sujeita às validações fiscais do servidor. Não se deve alterar prompt, classificações ou validação para fazer este sintético ser aceito.
+
+A combinação HTTP 200 + `status: error` + `documentStatus: rejected` é intencional e já estava documentada para resultados documentais. `status` é o contrato compatível com a análise de formulário: `error` significa ausência de campos aplicáveis. `documentStatus` distingue rejeição de falha técnica; o status HTTP indica que a operação de análise concluiu. Uma recusa do modelo (`MODEL_REFUSAL`), resposta inválida ou erro do transporte segue outro caminho, com HTTP de erro.
+
+No código, `rejected` pode ser derivado de `MULTIPLE_DOCUMENTS` ou de classificação `other` clara e legível (`INCOMPATIBLE_DOCUMENT`). Os dados fornecidos não incluem `assessment.reasonCodes` ou a classificação bruta; portanto, o motivo exato deste piloto não foi confirmado. A ausência declarada de validade fiscal é compatível com uma rejeição, mas essa explicação permanece hipótese. O backend não certifica autenticidade fiscal.
+
+O [detalhamento do contrato e da revisão offline](receipts-route-validation.md#revisão-após-o-primeiro-piloto-real) descreve o fluxo completo, respostas parciais e inconclusivas. Nenhuma mudança de comportamento de produção foi necessária nesta revisão. Qualquer nova chamada exige autorização separada; o primeiro piloto não autoriza remover, trocar ou contornar a trava.
 
 ## Controles implementados
 
@@ -207,7 +233,7 @@ Remove-Variable pilotMarker -ErrorAction SilentlyContinue
 
 Fechar as duas janelas após a inspeção para eliminar referências em memória (objetos gerenciados não oferecem apagamento absoluto). Revogar a chave dedicada usada no teste pela plataforma, sem copiá-la para logs. Na plataforma OpenAI, filtrar o projeto e intervalo do teste em Usage/Costs, conferir requisições/tokens e custo efetivamente registrado; aguardar atualização se necessário. Não consultar APIs administrativas usando outra chave neste roteiro. Comparar com a estimativa local; custo desconhecido exige conferência externa, nunca uma nova chamada para medir. Confirmar `git status --short` sem credenciais/documentos acrescentados.
 
-O piloto não resolve controles distribuídos, retenção em produção ou risco de processos locais maliciosos. `store:false` não deve ser interpretado como garantia de retenção zero. A preparação operacional está implementada; autorização paga, acesso da conta/modelo, ADC, documento e validação manual continuam pendentes.
+O piloto não resolve controles distribuídos, retenção em produção ou risco de processos locais maliciosos. `store:false` não deve ser interpretado como garantia de retenção zero. Na entrega original 6C.2, autorização paga, acesso da conta/modelo, ADC, documento e validação manual ainda estavam pendentes. O registro posterior no início deste documento informa o resultado da primeira tentativa; não comprova extração fiscal válida nem libera novas chamadas.
 
 ## Verificações offline da entrega
 

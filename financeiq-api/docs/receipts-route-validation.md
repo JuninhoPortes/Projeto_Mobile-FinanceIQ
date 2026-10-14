@@ -1,5 +1,7 @@
 # Etapa 6B.3 — validação HTTP completa sem serviços externos
 
+Atualização posterior: o [primeiro piloto real relatado](receipts-first-real-pilot.md#registro-posterior--primeiro-piloto-real-concluído) concluiu a integração com rejeição documental. A seção final deste documento explica o contrato e a revisão offline; os totais e pendências da entrega 6B.3 abaixo são históricos.
+
 Base: `5a267a7`, branch `feat/leitura-notas-openai`. A revisão confirmou que a Etapa 6B.2 já conectou o transporte ao middleware e ao controller. Não foi necessário alterar código de produção, contratos, configurações, dependências ou frontend. Esta entrega acrescenta a suíte `tests/receiptAnalyzeRoute.test.cjs` e documenta a cobertura integrada.
 
 ## Fluxo exercitado
@@ -69,3 +71,31 @@ Esta entrega não autoriza nem inicia um teste pago. Permanecem necessários:
 5. Encerramento do teste com desativação e reinício do backend, sem salvar lançamentos automaticamente. Cancelamento local não comprova cancelamento remoto nem ausência de cobrança.
 
 Precisão do modelo, disponibilidade na conta, latência real e custos efetivos não são medidos por clientes falsos. Clientes não cooperativos mantêm reservas ocupadas até terminar; testes com gates controlados comprovam essa proteção, sem prometer interrupção arbitrária no mesmo processo. O frontend ainda rejeita `isSimulated: false` e sua adaptação continua separada.
+
+## Revisão após o primeiro piloto real
+
+O fluxo inspecionado permanece: router → autenticação/UID → quotas → multipart → validação binária → escopo documental → adaptador/transporte → validação estrutural e fiscal → término confirmado do transporte → descarte/liberação → controller. O transporte não escolhe a aceitação documental. A origem real vem exclusivamente da configuração interna; nenhuma falha resulta em fallback fictício.
+
+1. `receiptOpenAIAdapter.ts` exige um envelope `completed`, uma mensagem de texto estruturado e JSON conforme o esquema v1. Resposta incompleta, recusa, JSON/estrutura inválidos e inconsistências semânticas produzem falha técnica, sem campos aplicáveis.
+2. `receiptExtractionValidation.ts` valida campos, centavos, moeda e data; depois deriva `assessment.acceptance`. Múltiplos documentos são rejeitados. Ilegibilidade e classificação incerta/desconhecida são indeterminadas. Classificação `other` clara e legível é rejeitada. Essas decisões usam precedência explícita; um documento `other` ilegível pode ser inconclusivo, sem afirmar classificação segura.
+3. O validador gera `analysis.status: error` quando a aceitação não é `accepted` ou quando não existe descrição, total, tipo ou categoria seguros para aplicação. Para aceitos com campos aproveitáveis, gera `success`/`partial`, omitindo valores ausentes, incertos ou inferidos. Categorias só são resolvidas contra contexto autorizado e ativo; o contexto vazio da rota mantém categoria ausente e impede sucesso completo.
+4. O adaptador transforma aceitação rejeitada em resultado `rejected`; aceitação indeterminada ou análise sem campos aplicáveis em `inconclusive`; demais casos preservam `success`/`partial`. As métricas usam esse status documental, não o `status` compatível aninhado na análise.
+5. `receiptController.ts` decide HTTP usando o resultado do adaptador. Somente `error`/`cancelled` seguem para HTTP de erro; resultados documentais retornam HTTP 200 com `status` da análise, `documentStatus` do adaptador e `assessment`. A resposta só é enviada após o descarte documental.
+
+| Situação | HTTP | `status` compatível | `documentStatus` / detalhe |
+| --- | --- | --- | --- |
+| Campos completos e categoria autorizada (adaptador com contexto controlado) | 200 | `success` | `success` |
+| Documento aceito com campos seguros incompletos | 200 | `partial` | `partial`; apenas campos seguros presentes |
+| Documento incompatível ou múltiplo | 200 | `error` | `rejected`; `assessment.acceptance=rejected`; sem `fields`, `assessment.fields={}` |
+| Documento desconhecido, incerto ou ilegível | 200 | `error` | `inconclusive`; `assessment.acceptance=undetermined`; sem `fields`, `assessment.fields={}` |
+| Classificação aceita, sem campos seguros de lançamento | 200 | `error` | `inconclusive`; `assessment.acceptance=accepted`; sem `fields` |
+| Recusa, resposta incompleta/inválida ou falha técnica comum | 503 | Envelope `error: true` e `code` | Não é rejeição documental; sem campos aplicáveis |
+| Rate limit do provedor / timeout / cancelamento detectado pelo adaptador | 429 / 504 / 504 | Envelope `error: true` e `code` | Uma desconexão pode impedir qualquer resposta HTTP |
+
+No caso específico de classificação aceita e somente data segura, `assessment.fields` pode conservar `identifiedDate` informativa, embora não haja `fields` aplicáveis na análise. Isso não define `date` ou `period_month` nem transforma o resultado em parcial. Emitente isolado também não constitui campo de lançamento. A distinção evita afirmar que toda resposta inconclusiva tem necessariamente `assessment.fields` vazio.
+
+O comportamento HTTP relatado no piloto corresponde à política existente; não foi identificado defeito que justificasse alterar aceitação, contrato ou códigos HTTP. A limitação de nomenclatura é preservada e esclarecida: `status: error` sozinho não distingue problema documental de falha técnica; consultar também HTTP, `documentStatus` e `assessment`/`code`, conforme o envelope.
+
+Cobertura ajustada apenas nas lacunas: o teste HTTP de rejeição/inconclusão agora verifica origem real, aceitação, ausência de código técnico e status documental nas métricas; o de leitura parcial verifica HTTP, aceitação e preservação da descrição segura. Um teste novo cobre classificação aceita sem campos de lançamento (todos ausentes, emitente isolado ou data informativa isolada). Não se replica a resposta privada do piloto. Clientes, autenticação e documentos continuam falsos/sintéticos, com guardas de rede externa e observação de descarte já existentes. Código de produção, frontend, configuração e trava operacional permanecem inalterados.
+
+Validação desta revisão: 117 testes pertinentes aprovados nas suítes de rota, adaptador, transporte, validação fiscal e simulação; suíte completa com 463 aprovados (462 anteriores e um novo), sem falhas, cancelamentos ou testes ignorados. TypeScript do frontend e do backend e `git diff --check` passaram. Nenhuma chamada real foi executada, nenhum arquivo privado foi acessado e o marcador operacional não foi consultado nem alterado.

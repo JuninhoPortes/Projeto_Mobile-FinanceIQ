@@ -54,7 +54,7 @@ Em modo simulado, resultados documentais recebem HTTP 200 e preservam o formato 
 }
 ```
 
-`documentStatus` distingue `success`, `partial`, `rejected` e `inconclusive`. Nos dois últimos, o `status` compatível é `error` e não há `fields` aplicáveis; `assessment.fields` é vazio. A simulação não classifica o arquivo enviado nem reconhece seu conteúdo: o cenário é escolhido exclusivamente no servidor.
+`documentStatus` distingue `success`, `partial`, `rejected` e `inconclusive`. Nos dois últimos, o `status` compatível é `error` e não há `fields` aplicáveis. Nas fixtures de documento rejeitado/indeterminado desta simulação, `assessment.fields` é vazio; uma classificação aceita sem campos de lançamento pode ser inconclusiva e conservar somente `identifiedDate` informativa em `assessment.fields`, conforme a [revisão do contrato](receipts-route-validation.md#revisão-após-o-primeiro-piloto-real). A simulação não classifica o arquivo enviado nem reconhece seu conteúdo: o cenário é escolhido exclusivamente no servidor.
 
 Falhas técnicas usam `{ error: true, code, message, isSimulated: true }`, sem campos financeiros: 504 para timeout/cancelamento do adaptador, 429 para rate limit e 503 para outras falhas de interpretação. Erros anteriores (401/403, formato, tamanho, quotas e cancelamento do ciclo documental) mantêm seus envelopes existentes e podem não conter `isSimulated`, pois não houve análise.
 

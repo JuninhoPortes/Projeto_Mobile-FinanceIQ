@@ -298,7 +298,11 @@ test('HTTP completo: campos ausentes e incertos são omitidos sem inferir catego
     value.fields.category = { value: null, certainty: 'missing' };
     const route = await endpoint(t, { reply: () => response(value) });
     const result = await route.request(await pngPayload());
+    assert.equal(result.status, 200); assert.equal(result.body.isSimulated, false);
     assert.equal(result.body.status, 'partial');
+    assert.equal(result.body.documentStatus, 'partial'); assert.equal(result.body.assessment.acceptance, 'accepted');
+    assert.equal(result.body.fields.description, value.fields.description.value);
+    assert.equal('code' in result.body, false);
     for (const key of ['amount', 'type', 'category']) assert.equal(key in result.body.fields, false);
     assert.ok(result.body.assessment[certainty === 'missing' ? 'missingFields' : 'uncertainFields'].includes('amount'));
   }
@@ -327,6 +331,36 @@ test('HTTP completo: documento não fiscal, inconclusivo, ilegível ou múltiplo
     const route = await endpoint(t, { reply: () => response(value) }); const result = await route.request(await pngPayload());
     assert.equal(result.status, 200); assert.equal(result.body.documentStatus, status);
     assert.equal(result.body.status, 'error'); assert.ok(result.body.assessment.reasonCodes.includes(reason)); noFields(result);
+    assert.equal(result.body.assessment.acceptance, status === 'rejected' ? 'rejected' : 'undetermined');
+    assert.equal(result.body.isSimulated, false); assert.equal('code' in result.body, false);
+    assert.doesNotMatch(result.body.message, /simula|demonstrativ/i);
+    assert.equal(route.metrics.length, 1); assert.equal(route.metrics[0].status, status);
+    assert.equal(route.metrics[0].isSimulated, false);
+  }
+});
+
+test('HTTP completo: classificação aceita sem campos de lançamento seguros permanece inconclusiva', async t => {
+  // Casos novos de cobertura; não reproduzem a resposta privada do piloto.
+  for (const informationalField of [null, 'merchant', 'identifiedDate']) {
+    const value = extraction();
+    for (const name of Object.keys(value.fields)) {
+      if (name === informationalField) continue;
+      value.fields[name] = name === 'amount'
+        ? { valueCents: null, currency: null, certainty: 'missing' }
+        : { value: null, certainty: 'missing' };
+    }
+    const route = await endpoint(t, { reply: () => response(value) });
+    const result = await route.request(await pngPayload());
+    assert.equal(result.status, 200); assert.equal(result.body.isSimulated, false);
+    assert.equal(result.body.status, 'error'); assert.equal(result.body.documentStatus, 'inconclusive');
+    assert.equal(result.body.assessment.acceptance, 'accepted');
+    assert.equal('fields' in result.body, false); assert.equal('code' in result.body, false);
+    // Data isolada é apenas informativa; nunca se torna campo de lançamento.
+    assert.deepEqual(result.body.assessment.fields, informationalField === 'identifiedDate'
+      ? { identifiedDate: value.fields.identifiedDate.value } : {});
+    assert.ok(result.body.assessment.missingFields.includes('amount'));
+    for (const key of ['date', 'period_month', 'source']) assert.equal(key in result.body, false);
+    assert.equal(route.metrics.length, 1); assert.equal(route.metrics[0].status, 'inconclusive');
   }
 });
 
