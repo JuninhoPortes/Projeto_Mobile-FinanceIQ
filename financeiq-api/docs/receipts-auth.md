@@ -1,6 +1,6 @@
-# Rota de notas fiscais — Etapa 2
+# Rota de notas fiscais — Etapas 2 e 3
 
-`POST /receipts/analyze` testa exclusivamente autenticação Firebase e autorização do piloto. Não analisa documentos, não chama OpenAI, não usa os validadores da Etapa 1 e não salva transações. O frontend ainda usa o mock existente.
+`POST /receipts/analyze` autentica, autoriza e recebe um documento com validação binária temporária. Não interpreta conteúdo financeiro, não chama OpenAI, não usa os validadores de extração da Etapa 1 e não salva transações. O frontend ainda usa o mock existente. Consulte [upload e limites](receipts-upload.md) para habilitação local, campo multipart, políticas e teste HTTP.
 
 ## Configuração no servidor
 
@@ -40,9 +40,9 @@ Todas as respostas da cadeia de autenticação possuem `Cache-Control: no-store`
 | 401 | `AUTH_REQUIRED` | Token ausente, cabeçalho inválido/duplicado, token inválido, expirado, revogado ou usuário desabilitado/inexistente. Inclui `WWW-Authenticate: Bearer`. |
 | 403 | `RECEIPT_ACCESS_DENIED` | Token verificado, mas UID não autorizado no piloto. |
 | 503 | `AUTH_UNAVAILABLE` | Inicialização/configuração, modo emulador ou falha operacional do verificador. |
-| 501 | `RECEIPT_ANALYSIS_NOT_IMPLEMENTED` | Autenticação e autorização válidas; interpretação ainda não implementada. |
+| 501 | `RECEIPT_ANALYSIS_NOT_IMPLEMENTED` | Autenticação, autorização e validação do documento válidas; interpretação ainda não implementada. |
 
-O 501 é determinístico e nunca contém campos financeiros, UID, tokens ou dados simulados. Não há parser de JSON/multipart na cadeia desta rota: nenhum arquivo ou campo de corpo é lido/processado nesta etapa.
+O 501 é determinístico e nunca contém campos financeiros, UID, tokens ou dados simulados. Na Etapa 3, o parser multipart só é iniciado após autenticação, autorização e reserva de uso. Campos textuais e URLs não substituem o arquivo. Erros de upload e controles estão documentados em [upload e limites](receipts-upload.md).
 
 ## Preservação e testes
 
@@ -53,7 +53,7 @@ As rotas `/health`, `/open-finance` e `/indicators`, seu parser JSON e o CORS gl
 Executar a suíte completa na raiz:
 
 ```text
-node --test tests/receiptAcquisitionService.test.cjs tests/receiptMockService.test.cjs tests/receiptFormService.test.cjs tests/receiptIntegration.test.cjs tests/receiptExtractionValidation.test.cjs tests/receiptAuth.test.cjs
+node --test tests/receiptAcquisitionService.test.cjs tests/receiptMockService.test.cjs tests/receiptFormService.test.cjs tests/receiptIntegration.test.cjs tests/receiptExtractionValidation.test.cjs tests/receiptAuth.test.cjs tests/receiptUpload.test.cjs
 ```
 
 Checagem TypeScript no backend:
@@ -62,6 +62,6 @@ Checagem TypeScript no backend:
 tsc --noEmit -p financeiq-api/tsconfig.json
 ```
 
-Os testes não usam credenciais reais nem validam o projeto implantado. A validação real de um ID token requer configuração segura posterior do ambiente. Upload, validação de bytes/páginas, limites de taxa/consumo e interpretação permanecem para etapas futuras autorizadas. Até lá, manter a lista do piloto vazia em ambientes públicos.
+Os testes não usam credenciais reais nem validam o projeto implantado. A validação real de um ID token requer configuração segura do ambiente. A suíte de autenticação isola o upload com um middleware de teste; a suíte de upload executa os parsers reais, com verificador de token substituído em código. Nenhuma configuração permite ignorar tokens em produção. Controles distribuídos e interpretação permanecem pendentes; manter a lista do piloto vazia em ambientes públicos.
 
 Referências: [inicialização e ADC](https://firebase.google.com/docs/admin/setup), [verificação de ID tokens](https://firebase.google.com/docs/auth/admin/verify-id-tokens) e [verificação de revogação](https://firebase.google.com/docs/auth/admin/manage-sessions).

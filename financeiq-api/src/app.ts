@@ -16,7 +16,7 @@ export function createApp(dependencies: ReceiptAuthDependencies = {}) {
   const app = express();
   app.use(cors());
 
-  // Antes do parser JSON: esta etapa não lê o corpo nem aceita uploads.
+  // Parser multipart exclusivo da rota, após autenticação/autorização e quotas.
   app.use('/receipts', createReceiptRoutes(
     dependencies.verifyToken ?? createFirebaseTokenVerifier(),
     dependencies.pilotUIDs ?? process.env.RECEIPT_PILOT_UIDS

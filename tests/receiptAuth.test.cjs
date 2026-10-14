@@ -26,7 +26,9 @@ function loadTypeScript(file, dependencies = {}, globals = {}) {
 const middleware = loadTypeScript('financeiq-api/src/middleware/receiptAuth.ts');
 const controller = loadTypeScript('financeiq-api/src/controllers/receiptController.ts');
 const receipts = loadTypeScript('financeiq-api/src/routes/receiptRoutes.ts', {
-  express, '../controllers/receiptController': controller, '../middleware/receiptAuth': middleware
+  express, '../controllers/receiptController': controller, '../middleware/receiptAuth': middleware,
+  // Esta suíte isola a autenticação; upload real é coberto em receiptUpload.test.cjs.
+  '../middleware/receiptUpload': { createReceiptUpload: () => (_req, _res, next) => next() }
 });
 const openFinanceService = loadTypeScript('financeiq-api/src/services/openFinanceMockService.ts');
 const openFinanceController = loadTypeScript('financeiq-api/src/controllers/openFinanceController.ts', {
@@ -254,7 +256,7 @@ test('inicialização reutiliza app nomeado entre verificadores e rejeita projet
   assert.equal(firebase.calls.verify.length, 2);
 });
 
-test('rota provisória não lê JSON nem processa multipart e não consulta interpretadores externos', async t => {
+test('autenticação isolada preserva resposta provisória sem consultar interpretadores externos', async t => {
   const request = await serve(t, appRuntime());
   const before = externalCalls.length;
   assert.equal((await request(undefined, { token: 'valid-token', body: '{invalid json' })).status, 501);
