@@ -36,15 +36,15 @@ const tokenize = (value: string) => Array.from(
 );
 type Tokens = ReturnType<typeof tokenize>;
 
-function isTransport99(description: string, tokens: Tokens, index: number): boolean {
+function isTransport99(description: string, tokens: Tokens, index: number, needsContext = true): boolean {
   const token = tokens[index];
   const before = description.slice(0, token.start);
   const after = description.slice(token.end);
   // Não confundir 99,90, 1,99, R$ 99 ou 99 reais com o nome do serviço.
   if (/\d[.,]\s*$/.test(before) || /^[.,]\s*\d/.test(after) ||
     /(?:r\$|\$|brl)\s*$/.test(before) || /^\s*(?:reais|real|brl)\b/.test(after)) return false;
-  // Contexto local explícito, sem ampliar o vocabulário de estabelecimentos.
-  return tokens.slice(Math.max(0, index - 2), index + 3).some(item =>
+  // 99 exige contexto; a marca completa 99Pop dispensa contexto, mas nunca a proteção monetária.
+  return !needsContext || tokens.slice(Math.max(0, index - 2), index + 3).some(item =>
     ['app', 'aplicativo', 'taxi', 'corrida', 'transporte'].includes(item.value)
   );
 }
@@ -53,7 +53,8 @@ function matchesPhrase(description: string, tokens: Tokens, phrase: Tokens): boo
   if (!phrase.length) return false;
   return tokens.some((_token, index) =>
     phrase.every((part, offset) => tokens[index + offset]?.value === part.value) &&
-    (phrase.length !== 1 || phrase[0].value !== '99' || isTransport99(description, tokens, index))
+    (phrase.length !== 1 || !['99', '99pop'].includes(phrase[0].value) ||
+      isTransport99(description, tokens, index, phrase[0].value === '99'))
   );
 }
 

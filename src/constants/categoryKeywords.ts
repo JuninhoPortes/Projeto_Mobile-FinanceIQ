@@ -25,7 +25,6 @@ export const categoryKeywordRules: CategoryKeywordRule[] = [
       'agua',
       'internet',
       'iptu',
-      'casa',
       'moradia',
       'net residencial',
       'claro residencial',
@@ -39,6 +38,11 @@ export const categoryKeywordRules: CategoryKeywordRule[] = [
     confidence: 'alta',
     keywords: [
       'restaurante',
+      "mcdonald's",
+      'mcdonalds',
+      'mc donalds',
+      'burger king',
+      'lanchonete',
       'ifood',
       'delivery',
       'lanche',
@@ -66,6 +70,10 @@ export const categoryKeywordRules: CategoryKeywordRule[] = [
     keywords: [
       'mercado',
       'supermercado',
+      'supermercado bh',
+      'atacadão',
+      'assaí',
+      'carrefour',
       'compras',
       'compra',
       'loja',
@@ -99,6 +107,7 @@ export const categoryKeywordRules: CategoryKeywordRule[] = [
     keywords: [
       'uber',
       '99',
+      '99pop',
       'taxi',
       'táxi',
       'ônibus',
@@ -122,6 +131,12 @@ export const categoryKeywordRules: CategoryKeywordRule[] = [
     keywords: [
       'farmácia',
       'farmacia',
+      'drogasil',
+      'droga raia',
+      'drogaria são paulo',
+      'drogaria pacheco',
+      'drogarias pacheco',
+      'panvel',
       'remédio',
       'remedio',
       'consulta',
@@ -157,7 +172,7 @@ export const categoryKeywordRules: CategoryKeywordRule[] = [
       'prime video',
       'disney',
       'hbo',
-      'max',
+      'hbo max',
       'globoplay',
       'youtube premium'
     ]

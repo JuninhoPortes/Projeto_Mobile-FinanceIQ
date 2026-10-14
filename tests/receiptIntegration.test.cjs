@@ -202,6 +202,67 @@ const realScreen = (options = {}) => screenRuntime({
   ...options
 });
 
+const merchantScreen = () => realScreen({
+  categories: loadTypeScript('src/constants/defaultCategories.ts').defaultCategories.map((category, index) => ({
+    ...category, id: String(index), user_id: 'test-user', is_active: true, is_default: true
+  }))
+});
+
+test('estabelecimentos novos preservam escolha manual e avisos já corrigidos', async () => {
+  const f = await merchantScreen();
+  button(f.runtime.tree, 'Compras').props.onPress(); f.runtime.render();
+  for (const description of ['Drogasil', 'Burger King', 'Carrefour', '99Pop', 'HBO Max']) {
+    changeDescription(f.runtime, description);
+    assert.equal(categorySelected(f.runtime, 'Compras'), true, description);
+    for (const category of ['Saúde', 'Alimentação', 'Transporte', 'Lazer']) {
+      assert.equal(categorySelected(f.runtime, category), false);
+      assert.equal(text(f.runtime.tree).includes(`Categoria sugerida: ${category}.`), false);
+    }
+  }
+  assert.equal(f.categoryReads(), 1);
+  assert.equal(f.writes.length, 0);
+  f.runtime.unmount();
+});
+
+test('estabelecimentos novos mantêm remoção da seleção automática obsoleta e tratamento de conflitos', async () => {
+  const f = await merchantScreen();
+  for (const description of ['d', 'dr', 'drogasi']) {
+    changeDescription(f.runtime, description);
+    assert.equal(categorySelected(f.runtime, 'Saúde'), false);
+  }
+  changeDescription(f.runtime, 'Drogasil');
+  assert.equal(categorySelected(f.runtime, 'Saúde'), true);
+  changeDescription(f.runtime, 'Drogasilina');
+  assert.equal(categorySelected(f.runtime, 'Saúde'), false);
+  changeDescription(f.runtime, 'Burger King');
+  assert.equal(categorySelected(f.runtime, 'Alimentação'), true);
+  changeDescription(f.runtime, 'Burger King e Panvel');
+  assert.equal(categorySelected(f.runtime, 'Alimentação'), false);
+  assert.equal(categorySelected(f.runtime, 'Saúde'), false);
+  assert.match(text(f.runtime.tree), /Mais de uma categoria/);
+  assert.equal(f.categoryReads(), 1);
+  assert.equal(f.writes.length, 0);
+  f.runtime.unmount();
+});
+
+test('estabelecimento em descrição demonstrativa não dispara categorização automática da importação', async () => {
+  for (const provider of ['mock', 'backend']) {
+    const f = await merchantScreen();
+    receiptSection(f.runtime).props.onApply({
+      ...analysis('partial'), provider, fields: { description: 'Drogasil', amount: 50, type: 'outcome' }
+    });
+    f.runtime.render();
+    assert.equal(categorySelected(f.runtime, 'Saúde'), false);
+    assert.equal(text(f.runtime.tree).includes('Categoria sugerida: Saúde.'), false);
+    // Uma edição explícita devolve o controle ao motor para texto informado pelo usuário.
+    changeDescription(f.runtime, 'Drogasil!');
+    assert.equal(categorySelected(f.runtime, 'Saúde'), true);
+    assert.equal(f.categoryReads(), 1);
+    assert.equal(f.writes.length, 0);
+    f.runtime.unmount();
+  }
+});
+
 test('motor real: digitação progressiva de barbearia remove seleção automática intermediária', async () => {
   const f = await realScreen();
   for (const [description, selected] of [['b', false], ['ba', false], ['bar', true], ['barb', false], ['barbearia', false]]) {
